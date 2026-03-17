@@ -3,39 +3,58 @@ export type Database = {
     Tables: {
       customers: {
         Row: Customer
-        Insert: Omit<Customer, 'id' | 'created_at' | 'updated_at'>
-        Update: Partial<Omit<Customer, 'id'>>
+        Insert: Partial<Customer> & Pick<Customer, never>
+        Update: Partial<Customer>
+        Relationships: []
       }
       products: {
         Row: Product
-        Insert: Omit<Product, 'id' | 'created_at' | 'updated_at'>
-        Update: Partial<Omit<Product, 'id'>>
+        Insert: Partial<Product> & Pick<Product, 'name' | 'display_name'>
+        Update: Partial<Product>
+        Relationships: []
       }
       product_aliases: {
         Row: ProductAlias
-        Insert: Omit<ProductAlias, 'id' | 'created_at'>
-        Update: Partial<Omit<ProductAlias, 'id'>>
+        Insert: Partial<ProductAlias> & Pick<ProductAlias, 'product_id' | 'alias'>
+        Update: Partial<ProductAlias>
+        Relationships: []
       }
       transactions: {
         Row: Transaction
-        Insert: Omit<Transaction, 'id' | 'created_at' | 'updated_at' | 'month'>
-        Update: Partial<Omit<Transaction, 'id' | 'month'>>
+        Insert: Partial<Transaction> & Pick<Transaction, 'source' | 'transaction_date'>
+        Update: Partial<Omit<Transaction, 'month'>>
+        Relationships: []
       }
       data_overrides: {
         Row: DataOverride
-        Insert: Omit<DataOverride, 'id' | 'created_at'>
-        Update: Partial<Omit<DataOverride, 'id'>>
+        Insert: Partial<DataOverride> & Pick<DataOverride, 'target_table' | 'target_id' | 'field_name'>
+        Update: Partial<DataOverride>
+        Relationships: []
       }
       data_sources: {
         Row: DataSource
-        Insert: Omit<DataSource, 'id' | 'created_at' | 'updated_at'>
-        Update: Partial<Omit<DataSource, 'id'>>
+        Insert: Partial<DataSource> & Pick<DataSource, 'name' | 'source_type'>
+        Update: Partial<DataSource>
+        Relationships: []
       }
       marketing_metrics: {
         Row: MarketingMetrics
-        Insert: Omit<MarketingMetrics, 'id' | 'created_at' | 'updated_at'>
-        Update: Partial<Omit<MarketingMetrics, 'id'>>
+        Insert: Partial<MarketingMetrics> & Pick<MarketingMetrics, 'month'>
+        Update: Partial<MarketingMetrics>
+        Relationships: []
       }
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      [_ in never]: never
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
     }
   }
 }

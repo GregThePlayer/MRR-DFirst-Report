@@ -97,7 +97,7 @@ CREATE TABLE transactions (
 
   -- Dates
   transaction_date DATE NOT NULL,
-  month TEXT GENERATED ALWAYS AS (TO_CHAR(transaction_date, 'YYYY-MM')) STORED,
+  month TEXT GENERATED ALWAYS AS (EXTRACT(YEAR FROM transaction_date)::TEXT || '-' || LPAD(EXTRACT(MONTH FROM transaction_date)::TEXT, 2, '0')) STORED,
 
   -- Raw data preserved
   raw_data JSONB DEFAULT '{}',         -- original row from source
