@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabase'
 import { computeMonthlyMetrics } from './metrics'
 import { DEMO_METRICS, DEMO_PRODUCTS, DEMO_CUSTOMERS } from './demo-data'
@@ -15,11 +15,14 @@ interface DataState<T> {
   source: DataSource
   loading: boolean
   error: string | null
+  refetch: () => void
 }
 
 // ─── Metrics Hook ───
 export function useMetrics(): DataState<MonthlyMetrics[]> {
-  const [state, setState] = useState<DataState<MonthlyMetrics[]>>({
+  const [refreshKey, setRefreshKey] = useState(0)
+  const refetch = useCallback(() => setRefreshKey(k => k + 1), [])
+  const [state, setState] = useState<Omit<DataState<MonthlyMetrics[]>, 'refetch'>>({
     data: DEMO_METRICS,
     source: 'demo',
     loading: true,
@@ -46,7 +49,6 @@ export function useMetrics(): DataState<MonthlyMetrics[]> {
         const marketing = mkRes.data as MarketingMetrics[]
 
         if (transactions.length === 0) {
-          // Supabase connected but no data yet — use demo
           setState({ data: DEMO_METRICS, source: 'demo', loading: false, error: null })
           return
         }
@@ -60,14 +62,16 @@ export function useMetrics(): DataState<MonthlyMetrics[]> {
     }
 
     fetchMetrics()
-  }, [])
+  }, [refreshKey])
 
-  return state
+  return { ...state, refetch }
 }
 
 // ─── Transactions Hook ───
 export function useTransactions(): DataState<DemoTransaction[]> {
-  const [state, setState] = useState<DataState<DemoTransaction[]>>({
+  const [refreshKey, setRefreshKey] = useState(0)
+  const refetch = useCallback(() => setRefreshKey(k => k + 1), [])
+  const [state, setState] = useState<Omit<DataState<DemoTransaction[]>, 'refetch'>>({
     data: DEMO_TRANSACTIONS,
     source: 'demo',
     loading: true,
@@ -93,7 +97,6 @@ export function useTransactions(): DataState<DemoTransaction[]> {
           return
         }
 
-        // Map Supabase transactions to DemoTransaction format for UI compatibility
         const mapped: DemoTransaction[] = data.map((t: Record<string, unknown>) => ({
           id: t.id as string,
           date: t.transaction_date as string,
@@ -117,14 +120,16 @@ export function useTransactions(): DataState<DemoTransaction[]> {
     }
 
     fetchTransactions()
-  }, [])
+  }, [refreshKey])
 
-  return state
+  return { ...state, refetch }
 }
 
 // ─── Customers Hook ───
 export function useCustomers(): DataState<DemoCustomerFull[]> {
-  const [state, setState] = useState<DataState<DemoCustomerFull[]>>({
+  const [refreshKey, setRefreshKey] = useState(0)
+  const refetch = useCallback(() => setRefreshKey(k => k + 1), [])
+  const [state, setState] = useState<Omit<DataState<DemoCustomerFull[]>, 'refetch'>>({
     data: DEMO_CUSTOMERS_FULL,
     source: 'demo',
     loading: true,
@@ -202,14 +207,16 @@ export function useCustomers(): DataState<DemoCustomerFull[]> {
     }
 
     fetchCustomers()
-  }, [])
+  }, [refreshKey])
 
-  return state
+  return { ...state, refetch }
 }
 
 // ─── Products Hook ───
 export function useProducts(): DataState<typeof DEMO_PRODUCTS> {
-  const [state, setState] = useState<DataState<typeof DEMO_PRODUCTS>>({
+  const [refreshKey, setRefreshKey] = useState(0)
+  const refetch = useCallback(() => setRefreshKey(k => k + 1), [])
+  const [state, setState] = useState<Omit<DataState<typeof DEMO_PRODUCTS>, 'refetch'>>({
     data: DEMO_PRODUCTS,
     source: 'demo',
     loading: true,
@@ -261,9 +268,9 @@ export function useProducts(): DataState<typeof DEMO_PRODUCTS> {
     }
 
     fetchProducts()
-  }, [])
+  }, [refreshKey])
 
-  return state
+  return { ...state, refetch }
 }
 
 // ─── Connection status check ───

@@ -12,9 +12,11 @@ import {
   FileSpreadsheet,
   Table2,
 } from "lucide-react"
+import { Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { CurrencySwitcher } from "@/components/currency-switcher"
 import { useSupabaseStatus } from "@/lib/use-data"
+import { useImport } from "@/lib/import-context"
 
 const NAV_ITEMS = [
   { href: "/", label: "MRR Dashboard", icon: TrendingUp },
@@ -30,6 +32,7 @@ const NAV_ITEMS = [
 export function Sidebar() {
   const pathname = usePathname()
   const dbStatus = useSupabaseStatus()
+  const importCtx = useImport()
 
   return (
     <aside className="w-[240px] min-h-screen bg-white border-r border-gray-100 flex flex-col">
@@ -63,6 +66,12 @@ export function Sidebar() {
             >
               <item.icon className={cn("w-4 h-4", isActive ? "text-[#D9FD13]" : "")} />
               {item.label}
+              {item.href === '/import' && importCtx.status === 'importing' && (
+                <span className="ml-auto flex items-center gap-1 text-[10px] text-emerald-400">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  {importCtx.progress.current}/{importCtx.progress.total}
+                </span>
+              )}
             </Link>
           )
         })}

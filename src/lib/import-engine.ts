@@ -105,11 +105,16 @@ export function autoDetectMappings(columns: string[]): ColumnMapping[] {
 }
 
 // ─── Import engine ───
+export interface ImportSignal {
+  cancelled: boolean
+}
+
 export async function importToSupabase(
   rows: RawRow[],
   mappings: ColumnMapping[],
   sourceLabel: string,
-  onProgress?: (current: number, total: number) => void
+  onProgress?: (current: number, total: number) => void,
+  signal?: ImportSignal
 ): Promise<ImportResult> {
   if (!supabase) {
     return { totalRows: rows.length, imported: 0, skipped: rows.length, errors: ['Supabase not configured'], customersCreated: 0, customersMatched: 0, productsMatched: 0 }
@@ -173,6 +178,11 @@ export async function importToSupabase(
   const BATCH_SIZE = 50
 
   for (let i = 0; i < rows.length; i++) {
+    // Check for cancellation
+    if (signal?.cancelled) {
+      break
+    }
+
     const row = rows[i]
 
     try {

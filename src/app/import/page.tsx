@@ -5,11 +5,12 @@ import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Upload, FileSpreadsheet, CheckCircle, AlertTriangle, ArrowRight, X, Loader2, RefreshCw } from "lucide-react"
-import { parseFile, autoDetectMappings, importToSupabase, type RawRow, type ColumnMapping, type ImportResult } from "@/lib/import-engine"
+import { Upload, FileSpreadsheet, CheckCircle, AlertTriangle, ArrowRight, X, Loader2, RefreshCw, StopCircle } from "lucide-react"
+import { parseFile, autoDetectMappings, type RawRow, type ColumnMapping } from "@/lib/import-engine"
 import { isSupabaseConfigured } from "@/lib/supabase"
+import { useImport } from "@/lib/import-context"
 
-type ImportStep = 'upload' | 'preview' | 'mapping' | 'importing' | 'done'
+type LocalStep = 'upload' | 'preview' | 'mapping'
 
 const TARGET_FIELDS = [
   { value: 'transaction_date', label: 'Transaction Date' },
@@ -31,16 +32,21 @@ const TARGET_FIELDS = [
 ]
 
 export default function ImportPage() {
-  const [step, setStep] = useState<ImportStep>('upload')
+  const importCtx = useImport()
+  const [localStep, setLocalStep] = useState<LocalStep>('upload')
   const [fileName, setFileName] = useState("")
   const [dragOver, setDragOver] = useState(false)
   const [rows, setRows] = useState<RawRow[]>([])
   const [columns, setColumns] = useState<string[]>([])
   const [mappings, setMappings] = useState<ColumnMapping[]>([])
-  const [progress, setProgress] = useState({ current: 0, total: 0 })
-  const [result, setResult] = useState<ImportResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Determine effective step: local steps for pre-import, context-driven for import/done
+  const isImporting = importCtx.status === 'importing'
+  const isDone = importCtx.status === 'done' || importCtx.status === 'cancelled'
+  const isError = importCtx.status === 'error'
+  const effectiveStep = isImporting ? 'importing' : (isDone || isError) ? 'done' : localStep
 
   const handleFile = useCallback(async (file: File) => {
     setError(null)
@@ -55,7 +61,7 @@ export default function ImportPage() {
       setColumns(cols)
       const detected = autoDetectMappings(cols)
       setMappings(detected)
-      setStep('preview')
+      setLocalStep('preview')
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to parse file")
     }
@@ -86,30 +92,22 @@ export default function ImportPage() {
     })
   }
 
-  const startImport = async () => {
-    setStep('importing')
-    setProgress({ current: 0, total: rows.length })
+  const startImport = () => {
+    const now = new Date().toISOString().slice(0, 10)
+    const sourceLabel = fileName.toLowerCase().includes('stripe') ? `stripe_${now}` :
+      fileName.toLowerCase().includes('invoice') || fileName.toLowerCase().includes('faktur') ? `invoice_${now}` : `csv_import_${now}`
 
-    const sourceLabel = fileName.toLowerCase().includes('stripe') ? 'stripe' :
-      fileName.toLowerCase().includes('invoice') || fileName.toLowerCase().includes('faktur') ? 'invoice' : 'csv_import'
-
-    const res = await importToSupabase(rows, mappings, sourceLabel, (current, total) => {
-      setProgress({ current, total })
-    })
-
-    setResult(res)
-    setStep('done')
+    importCtx.startImport(rows, mappings, sourceLabel)
   }
 
   const reset = () => {
-    setStep('upload')
+    importCtx.resetImport()
+    setLocalStep('upload')
     setFileName('')
     setRows([])
     setColumns([])
     setMappings([])
-    setResult(null)
     setError(null)
-    setProgress({ current: 0, total: 0 })
   }
 
   const STEPS = [
@@ -121,6 +119,7 @@ export default function ImportPage() {
   ]
 
   const supabaseOk = isSupabaseConfigured()
+  const result = importCtx.result
 
   return (
     <div className="space-y-6">
@@ -143,11 +142,11 @@ export default function ImportPage() {
         {STEPS.map((s, i) => (
           <div key={s.key} className="flex items-center gap-2">
             <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${
-              step === s.key ? 'bg-black text-white' :
-              STEPS.findIndex(x => x.key === step) > i ? 'bg-emerald-100 text-emerald-700' :
+              effectiveStep === s.key ? 'bg-black text-white' :
+              STEPS.findIndex(x => x.key === effectiveStep) > i ? 'bg-emerald-100 text-emerald-700' :
               'bg-gray-100 text-gray-500'
             }`}>
-              {STEPS.findIndex(x => x.key === step) > i ? <CheckCircle className="w-3 h-3" /> : null}
+              {STEPS.findIndex(x => x.key === effectiveStep) > i ? <CheckCircle className="w-3 h-3" /> : null}
               {s.label}
             </div>
             {i < STEPS.length - 1 && <ArrowRight className="w-3 h-3 text-gray-300" />}
@@ -167,7 +166,7 @@ export default function ImportPage() {
       {/* Hidden file input */}
       <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls,.tsv" className="hidden" onChange={handleFileInput} />
 
-      {step === 'upload' && (
+      {effectiveStep === 'upload' && (
         <>
           <Card
             className={`p-12 border-2 border-dashed shadow-none text-center cursor-pointer transition-colors ${
@@ -228,7 +227,7 @@ export default function ImportPage() {
         </>
       )}
 
-      {step === 'preview' && (
+      {effectiveStep === 'preview' && (
         <Card className="bg-white border border-gray-100 shadow-none overflow-hidden">
           <div className="p-4 border-b border-gray-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -280,14 +279,14 @@ export default function ImportPage() {
           </div>
           <div className="p-4 border-t border-gray-100 flex justify-between">
             <Button variant="outline" onClick={reset}>Back</Button>
-            <Button className="bg-black text-white hover:bg-gray-800" onClick={() => setStep('mapping')}>
+            <Button className="bg-black text-white hover:bg-gray-800" onClick={() => setLocalStep('mapping')}>
               Continue to Column Mapping <ArrowRight className="w-4 h-4 ml-1" />
             </Button>
           </div>
         </Card>
       )}
 
-      {step === 'mapping' && (
+      {effectiveStep === 'mapping' && (
         <Card className="bg-white border border-gray-100 shadow-none p-6">
           <h3 className="font-semibold text-sm mb-1">Column Mapping</h3>
           <p className="text-xs text-gray-500 mb-4">
@@ -329,7 +328,7 @@ export default function ImportPage() {
           )}
 
           <div className="flex justify-between mt-6">
-            <Button variant="outline" onClick={() => setStep('preview')}>Back</Button>
+            <Button variant="outline" onClick={() => setLocalStep('preview')}>Back</Button>
             <Button
               className="bg-black text-white hover:bg-gray-800"
               onClick={startImport}
@@ -341,61 +340,85 @@ export default function ImportPage() {
         </Card>
       )}
 
-      {step === 'importing' && (
+      {effectiveStep === 'importing' && (
         <Card className="bg-white border border-gray-100 shadow-none p-12 text-center">
           <Loader2 className="w-10 h-10 text-gray-300 mx-auto mb-3 animate-spin" />
           <p className="text-sm font-medium">Importing data...</p>
           <p className="text-xs text-gray-400 mt-1">
-            Processing {progress.current} / {progress.total} rows
+            Processing {importCtx.progress.current} / {importCtx.progress.total} rows
           </p>
           <div className="w-64 mx-auto mt-4 bg-gray-100 rounded-full h-2">
             <div
               className="bg-black rounded-full h-2 transition-all"
-              style={{ width: `${progress.total > 0 ? (progress.current / progress.total * 100) : 0}%` }}
+              style={{ width: `${importCtx.progress.total > 0 ? (importCtx.progress.current / importCtx.progress.total * 100) : 0}%` }}
             />
           </div>
-          <p className="text-[10px] text-gray-400 mt-2">Matching customers · Resolving product aliases · Deduplicating</p>
+          <p className="text-[10px] text-gray-400 mt-2">You can navigate to other pages — import continues in the background</p>
+          <Button
+            variant="outline"
+            className="mt-4 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+            onClick={importCtx.cancelImport}
+          >
+            <StopCircle className="w-4 h-4 mr-1" /> Cancel Import
+          </Button>
         </Card>
       )}
 
-      {step === 'done' && result && (
+      {effectiveStep === 'done' && (
         <Card className="bg-white border border-gray-100 shadow-none p-12 text-center">
-          {result.imported > 0 ? (
+          {importCtx.status === 'cancelled' ? (
+            <AlertTriangle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+          ) : result && result.imported > 0 ? (
             <CheckCircle className="w-10 h-10 text-emerald-500 mx-auto mb-3" />
+          ) : isError ? (
+            <AlertTriangle className="w-10 h-10 text-red-500 mx-auto mb-3" />
           ) : (
             <AlertTriangle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
           )}
-          <p className="text-lg font-bold">
-            {result.imported > 0 ? 'Import Complete' : 'No rows imported'}
-          </p>
-          <div className="flex items-center justify-center gap-6 mt-4 text-sm">
-            <div>
-              <p className="text-2xl font-bold">{result.imported}</p>
-              <p className="text-xs text-gray-400">Transactions</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{result.customersCreated + result.customersMatched}</p>
-              <p className="text-xs text-gray-400">Customers</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{result.productsMatched}</p>
-              <p className="text-xs text-gray-400">Products matched</p>
-            </div>
-          </div>
-          <div className="flex items-center justify-center gap-2 mt-4">
-            <Badge className="bg-emerald-100 text-emerald-700">{result.imported} imported</Badge>
-            {result.skipped > 0 && <Badge className="bg-amber-100 text-amber-700">{result.skipped} skipped</Badge>}
-            {result.customersCreated > 0 && <Badge className="bg-blue-100 text-blue-700">{result.customersCreated} new customers</Badge>}
-          </div>
 
-          {result.errors.length > 0 && (
-            <div className="mt-4 max-h-32 overflow-y-auto text-left bg-red-50 rounded p-3">
-              <p className="text-xs font-medium text-red-800 mb-1">Errors ({result.errors.length}):</p>
-              {result.errors.slice(0, 10).map((err, i) => (
-                <p key={i} className="text-[10px] text-red-600">{err}</p>
-              ))}
-              {result.errors.length > 10 && <p className="text-[10px] text-red-400">...and {result.errors.length - 10} more</p>}
-            </div>
+          <p className="text-lg font-bold">
+            {importCtx.status === 'cancelled' ? 'Import Cancelled' :
+             isError ? 'Import Error' :
+             result && result.imported > 0 ? 'Import Complete' : 'No rows imported'}
+          </p>
+
+          {isError && importCtx.error && (
+            <p className="text-sm text-red-600 mt-2">{importCtx.error}</p>
+          )}
+
+          {result && (
+            <>
+              <div className="flex items-center justify-center gap-6 mt-4 text-sm">
+                <div>
+                  <p className="text-2xl font-bold">{result.imported}</p>
+                  <p className="text-xs text-gray-400">Transactions</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{result.customersCreated + result.customersMatched}</p>
+                  <p className="text-xs text-gray-400">Customers</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{result.productsMatched}</p>
+                  <p className="text-xs text-gray-400">Products matched</p>
+                </div>
+              </div>
+              <div className="flex items-center justify-center gap-2 mt-4">
+                <Badge className="bg-emerald-100 text-emerald-700">{result.imported} imported</Badge>
+                {result.skipped > 0 && <Badge className="bg-amber-100 text-amber-700">{result.skipped} skipped</Badge>}
+                {result.customersCreated > 0 && <Badge className="bg-blue-100 text-blue-700">{result.customersCreated} new customers</Badge>}
+                {importCtx.status === 'cancelled' && <Badge className="bg-red-100 text-red-700">Cancelled</Badge>}
+              </div>
+
+              {result.errors.length > 0 && (
+                <div className="mt-4 max-h-32 overflow-y-auto text-left bg-red-50 rounded p-3">
+                  <p className="text-xs font-medium text-red-800 mb-1">Errors ({result.errors.length}):</p>
+                  {result.errors.slice(0, 10).map((err, i) => (
+                    <p key={i} className="text-[10px] text-red-600">{err}</p>
+                  ))}
+                  {result.errors.length > 10 && <p className="text-[10px] text-red-400">...and {result.errors.length - 10} more</p>}
+                </div>
+              )}
+            </>
           )}
 
           <Button className="mt-6 bg-black text-white hover:bg-gray-800" onClick={reset}>

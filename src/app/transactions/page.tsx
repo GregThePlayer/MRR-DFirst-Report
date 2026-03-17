@@ -10,14 +10,17 @@ import { DateRangePicker, DEFAULT_RANGE, filterByDateRange, type DateRange } fro
 import type { DemoTransaction } from "@/lib/demo-transactions"
 import { useCurrency } from "@/lib/currency-context"
 import { useTransactions } from "@/lib/use-data"
-import { Search, ArrowUpDown, Download, Filter, Database, ChevronLeft, ChevronRight } from "lucide-react"
+import { Search, ArrowUpDown, Download, Filter, Database, ChevronLeft, ChevronRight, Trash2 } from "lucide-react"
+import { supabase } from "@/lib/supabase"
+import { toast } from "sonner"
 
 type SortKey = 'date' | 'email' | 'amount' | 'plan' | 'status'
 type SortDir = 'asc' | 'desc'
 
 export default function TransactionsPage() {
   const { formatCurrency } = useCurrency()
-  const { data: DEMO_TRANSACTIONS } = useTransactions()
+  const { data: DEMO_TRANSACTIONS, source: dataSource, refetch } = useTransactions()
+  const [deleting, setDeleting] = useState<string | null>(null)
   const [dateRange, setDateRange] = useState<DateRange>(DEFAULT_RANGE)
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
@@ -49,6 +52,22 @@ export default function TransactionsPage() {
   const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
   const totalRev = filtered.filter(t => t.status === 'succeeded').reduce((s, t) => s + t.amount, 0)
+
+  const handleDelete = async (txId: string) => {
+    if (!supabase || dataSource !== 'supabase') return
+    if (!confirm('Delete this transaction? This cannot be undone.')) return
+    setDeleting(txId)
+    try {
+      const { error } = await (supabase as any).from('transactions').delete().eq('id', txId)
+      if (error) throw error
+      toast.success('Transaction deleted')
+      refetch()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete')
+    } finally {
+      setDeleting(null)
+    }
+  }
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
@@ -166,6 +185,7 @@ export default function TransactionsPage() {
                 <TableHead className="font-bold text-black">Source</TableHead>
                 <TableHead className="font-bold text-black">Type</TableHead>
                 <TableHead className="font-bold text-black">Invoice #</TableHead>
+                {dataSource === 'supabase' && <TableHead className="font-bold text-black w-[40px]"></TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -203,6 +223,18 @@ export default function TransactionsPage() {
                     }`}>{tx.type}</Badge>
                   </TableCell>
                   <TableCell className="text-[10px] text-gray-400 font-mono">{tx.invoiceNumber || '—'}</TableCell>
+                  {dataSource === 'supabase' && (
+                    <TableCell>
+                      <button
+                        onClick={() => handleDelete(tx.id)}
+                        disabled={deleting === tx.id}
+                        className="p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-500 transition-colors disabled:opacity-50"
+                        title="Delete transaction"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
