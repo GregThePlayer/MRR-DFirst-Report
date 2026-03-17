@@ -11,9 +11,9 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DateRangePicker, DEFAULT_RANGE, type DateRange } from "@/components/date-range-picker"
-import { DEMO_TRANSACTIONS, type DemoCustomerFull } from "@/lib/demo-transactions"
+import type { DemoCustomerFull } from "@/lib/demo-transactions"
 import { useCurrency } from "@/lib/currency-context"
-import { useCustomers } from "@/lib/use-data"
+import { useCustomers, useTransactions } from "@/lib/use-data"
 import {
   Search, Plus, Edit2, Building2, DollarSign, Package, Calendar,
   ArrowUpDown, Filter, Users, TrendingUp, ChevronLeft, ChevronRight, Mail, Phone, Hash
@@ -26,7 +26,8 @@ type SortDir = 'asc' | 'desc'
 export default function CustomersPage() {
   const { formatCurrency, convert, currency } = useCurrency()
   const sym = { USD: '$', EUR: '€', PLN: '' }[currency] || ''
-  const { data: DEMO_CUSTOMERS_FULL } = useCustomers()
+  const { data: DEMO_CUSTOMERS_FULL, loading } = useCustomers()
+  const { data: allTransactions } = useTransactions()
   const [dateRange, setDateRange] = useState<DateRange>(DEFAULT_RANGE)
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
@@ -70,8 +71,8 @@ export default function CustomersPage() {
     '2026-01': 'Jan 26', '2026-02': 'Feb 26', '2026-03': 'Mar 26',
   }
   const monthlyCounts = months.map(mo => {
-    const active = new Set(DEMO_TRANSACTIONS.filter(t => t.month === mo && t.status === 'succeeded').map(t => t.email))
-    const newCusts = new Set(DEMO_TRANSACTIONS.filter(t => t.month === mo && t.isFirst && t.status === 'succeeded').map(t => t.email))
+    const active = new Set(allTransactions.filter(t => t.month === mo && t.status === 'succeeded').map(t => t.email))
+    const newCusts = new Set(allTransactions.filter(t => t.month === mo && t.isFirst && t.status === 'succeeded').map(t => t.email))
     return { month: mo, label: monthLabels[mo], active: active.size, new: newCusts.size }
   })
 
@@ -97,7 +98,7 @@ export default function CustomersPage() {
 
   // Customer transactions for detail view
   const customerTx = selectedCustomer
-    ? DEMO_TRANSACTIONS.filter(t => t.email === selectedCustomer.email).sort((a, b) => b.date.localeCompare(a.date))
+    ? allTransactions.filter(t => t.email === selectedCustomer.email).sort((a, b) => b.date.localeCompare(a.date))
     : []
 
   return (
@@ -146,12 +147,12 @@ export default function CustomersPage() {
           </Card>
           <Card className="p-3 bg-white border border-gray-100 shadow-none text-center">
             <DollarSign className="w-4 h-4 text-gray-400 mx-auto mb-1" />
-            <p className="text-xl font-bold">{formatCurrency(DEMO_CUSTOMERS_FULL.reduce((s, c) => s + c.totalRevenue, 0) / DEMO_CUSTOMERS_FULL.length)}</p>
+            <p className="text-xl font-bold">{DEMO_CUSTOMERS_FULL.length > 0 ? formatCurrency(DEMO_CUSTOMERS_FULL.reduce((s, c) => s + c.totalRevenue, 0) / DEMO_CUSTOMERS_FULL.length) : formatCurrency(0)}</p>
             <p className="text-[10px] text-gray-400">Avg Revenue</p>
           </Card>
           <Card className="p-3 bg-white border border-gray-100 shadow-none text-center">
             <Calendar className="w-4 h-4 text-gray-400 mx-auto mb-1" />
-            <p className="text-xl font-bold">{(DEMO_CUSTOMERS_FULL.reduce((s, c) => s + c.activeMonths, 0) / DEMO_CUSTOMERS_FULL.length).toFixed(1)}</p>
+            <p className="text-xl font-bold">{DEMO_CUSTOMERS_FULL.length > 0 ? (DEMO_CUSTOMERS_FULL.reduce((s, c) => s + c.activeMonths, 0) / DEMO_CUSTOMERS_FULL.length).toFixed(1) : '0'}</p>
             <p className="text-[10px] text-gray-400">Avg Active Months</p>
           </Card>
         </div>

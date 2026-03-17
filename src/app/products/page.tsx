@@ -131,8 +131,8 @@ export default function ProductsPage() {
         <h3 className="font-semibold text-sm text-black mb-4">Revenue Distribution</h3>
         <div className="space-y-3">
           {DEMO_PRODUCTS.sort((a, b) => b.revenue - a.revenue).map(p => {
-            const maxRev = Math.max(...DEMO_PRODUCTS.map(p => p.revenue))
-            const pct = p.revenue / maxRev
+            const maxRev = DEMO_PRODUCTS.length > 0 ? Math.max(...DEMO_PRODUCTS.map(p => p.revenue)) : 1
+            const pct = maxRev > 0 ? p.revenue / maxRev : 0
             return (
               <div key={p.id} className="flex items-center gap-3">
                 <span className="text-xs text-gray-500 w-40 truncate">{p.name}</span>

@@ -3,8 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabase'
 import { computeMonthlyMetrics } from './metrics'
-import { DEMO_METRICS, DEMO_PRODUCTS, DEMO_CUSTOMERS } from './demo-data'
-import { DEMO_TRANSACTIONS, DEMO_CUSTOMERS_FULL, type DemoTransaction, type DemoCustomerFull } from './demo-transactions'
+import type { DemoTransaction, DemoCustomerFull } from './demo-transactions'
 import type { Transaction, MarketingMetrics, MonthlyMetrics, Customer, Product, ProductAlias } from '@/types/database'
 
 // ─── Connection status ───
@@ -23,15 +22,15 @@ export function useMetrics(): DataState<MonthlyMetrics[]> {
   const [refreshKey, setRefreshKey] = useState(0)
   const refetch = useCallback(() => setRefreshKey(k => k + 1), [])
   const [state, setState] = useState<Omit<DataState<MonthlyMetrics[]>, 'refetch'>>({
-    data: DEMO_METRICS,
-    source: 'demo',
+    data: [],
+    source: 'supabase',
     loading: true,
     error: null,
   })
 
   useEffect(() => {
     if (!supabase) {
-      setState(s => ({ ...s, loading: false }))
+      setState({ data: [], source: 'demo', loading: false, error: 'Supabase not configured' })
       return
     }
 
@@ -49,7 +48,7 @@ export function useMetrics(): DataState<MonthlyMetrics[]> {
         const marketing = mkRes.data as MarketingMetrics[]
 
         if (transactions.length === 0) {
-          setState({ data: DEMO_METRICS, source: 'demo', loading: false, error: null })
+          setState({ data: [], source: 'supabase', loading: false, error: null })
           return
         }
 
@@ -57,7 +56,7 @@ export function useMetrics(): DataState<MonthlyMetrics[]> {
         setState({ data: computed, source: 'supabase', loading: false, error: null })
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to fetch'
-        setState({ data: DEMO_METRICS, source: 'demo', loading: false, error: msg })
+        setState({ data: [], source: 'supabase', loading: false, error: msg })
       }
     }
 
@@ -72,15 +71,15 @@ export function useTransactions(): DataState<DemoTransaction[]> {
   const [refreshKey, setRefreshKey] = useState(0)
   const refetch = useCallback(() => setRefreshKey(k => k + 1), [])
   const [state, setState] = useState<Omit<DataState<DemoTransaction[]>, 'refetch'>>({
-    data: DEMO_TRANSACTIONS,
-    source: 'demo',
+    data: [],
+    source: 'supabase',
     loading: true,
     error: null,
   })
 
   useEffect(() => {
     if (!supabase) {
-      setState(s => ({ ...s, loading: false }))
+      setState({ data: [], source: 'demo', loading: false, error: 'Supabase not configured' })
       return
     }
 
@@ -92,12 +91,8 @@ export function useTransactions(): DataState<DemoTransaction[]> {
           .order('transaction_date', { ascending: false })
 
         if (error) throw error
-        if (!data || data.length === 0) {
-          setState({ data: DEMO_TRANSACTIONS, source: 'demo', loading: false, error: null })
-          return
-        }
 
-        const mapped: DemoTransaction[] = data.map((t: Record<string, unknown>) => ({
+        const mapped: DemoTransaction[] = (data || []).map((t: Record<string, unknown>) => ({
           id: t.id as string,
           date: t.transaction_date as string,
           month: t.month as string,
@@ -115,7 +110,7 @@ export function useTransactions(): DataState<DemoTransaction[]> {
         setState({ data: mapped, source: 'supabase', loading: false, error: null })
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to fetch'
-        setState({ data: DEMO_TRANSACTIONS, source: 'demo', loading: false, error: msg })
+        setState({ data: [], source: 'supabase', loading: false, error: msg })
       }
     }
 
@@ -130,15 +125,15 @@ export function useCustomers(): DataState<DemoCustomerFull[]> {
   const [refreshKey, setRefreshKey] = useState(0)
   const refetch = useCallback(() => setRefreshKey(k => k + 1), [])
   const [state, setState] = useState<Omit<DataState<DemoCustomerFull[]>, 'refetch'>>({
-    data: DEMO_CUSTOMERS_FULL,
-    source: 'demo',
+    data: [],
+    source: 'supabase',
     loading: true,
     error: null,
   })
 
   useEffect(() => {
     if (!supabase) {
-      setState(s => ({ ...s, loading: false }))
+      setState({ data: [], source: 'demo', loading: false, error: 'Supabase not configured' })
       return
     }
 
@@ -150,10 +145,6 @@ export function useCustomers(): DataState<DemoCustomerFull[]> {
           .order('last_active_at', { ascending: false })
 
         if (error) throw error
-        if (!data || data.length === 0) {
-          setState({ data: DEMO_CUSTOMERS_FULL, source: 'demo', loading: false, error: null })
-          return
-        }
 
         // Fetch transaction summaries per customer
         const { data: txData } = await supabase!
@@ -177,7 +168,7 @@ export function useCustomers(): DataState<DemoCustomerFull[]> {
           entry.monthlyData[tx.month] = (entry.monthlyData[tx.month] || 0) + tx.amount_usd
         }
 
-        const mapped: DemoCustomerFull[] = data.map((c: Customer) => {
+        const mapped: DemoCustomerFull[] = (data || []).map((c: Customer) => {
           const txInfo = txByCustomer.get(c.id)
           return {
             id: c.id,
@@ -202,7 +193,7 @@ export function useCustomers(): DataState<DemoCustomerFull[]> {
         setState({ data: mapped, source: 'supabase', loading: false, error: null })
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to fetch'
-        setState({ data: DEMO_CUSTOMERS_FULL, source: 'demo', loading: false, error: msg })
+        setState({ data: [], source: 'supabase', loading: false, error: msg })
       }
     }
 
@@ -213,19 +204,21 @@ export function useCustomers(): DataState<DemoCustomerFull[]> {
 }
 
 // ─── Products Hook ───
-export function useProducts(): DataState<typeof DEMO_PRODUCTS> {
+type ProductRow = { id: string; name: string; category: string; billing_type: string; base_price_usd: number | null; aliases: string[]; customers: number; revenue: number }
+
+export function useProducts(): DataState<ProductRow[]> {
   const [refreshKey, setRefreshKey] = useState(0)
   const refetch = useCallback(() => setRefreshKey(k => k + 1), [])
-  const [state, setState] = useState<Omit<DataState<typeof DEMO_PRODUCTS>, 'refetch'>>({
-    data: DEMO_PRODUCTS,
-    source: 'demo',
+  const [state, setState] = useState<Omit<DataState<ProductRow[]>, 'refetch'>>({
+    data: [],
+    source: 'supabase',
     loading: true,
     error: null,
   })
 
   useEffect(() => {
     if (!supabase) {
-      setState(s => ({ ...s, loading: false }))
+      setState({ data: [], source: 'demo', loading: false, error: 'Supabase not configured' })
       return
     }
 
@@ -237,10 +230,6 @@ export function useProducts(): DataState<typeof DEMO_PRODUCTS> {
         ])
 
         if (prodRes.error) throw prodRes.error
-        if (!prodRes.data || prodRes.data.length === 0) {
-          setState({ data: DEMO_PRODUCTS, source: 'demo', loading: false, error: null })
-          return
-        }
 
         const aliases = (aliasRes.data || []) as ProductAlias[]
         const aliasesByProduct = new Map<string, string[]>()
@@ -249,21 +238,21 @@ export function useProducts(): DataState<typeof DEMO_PRODUCTS> {
           aliasesByProduct.get(a.product_id)!.push(a.alias)
         }
 
-        const mapped = (prodRes.data as Product[]).map(p => ({
+        const mapped: ProductRow[] = ((prodRes.data || []) as Product[]).map(p => ({
           id: p.id,
           name: p.display_name,
           category: p.category,
           billing_type: p.billing_type,
           base_price_usd: p.base_price_usd,
           aliases: aliasesByProduct.get(p.id) || [],
-          customers: 0, // will be computed from transactions
+          customers: 0,
           revenue: 0,
         }))
 
         setState({ data: mapped, source: 'supabase', loading: false, error: null })
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to fetch'
-        setState({ data: DEMO_PRODUCTS, source: 'demo', loading: false, error: msg })
+        setState({ data: [], source: 'supabase', loading: false, error: msg })
       }
     }
 
@@ -287,7 +276,6 @@ export function useSupabaseStatus() {
       try {
         const { error } = await supabase!.from('products').select('id').limit(1)
         if (error) {
-          // Table doesn't exist yet
           if (error.code === 'PGRST205' || error.message.includes('does not exist')) {
             setStatus('no_tables')
           } else {
