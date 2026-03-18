@@ -376,32 +376,61 @@ export default function CustomersPage() {
                 </TabsContent>
 
                 <TabsContent value="transactions" className="mt-3">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="text-xs">Date</TableHead>
-                        <TableHead className="text-xs text-right">Amount</TableHead>
-                        <TableHead className="text-xs">Plan</TableHead>
-                        <TableHead className="text-xs">Status</TableHead>
-                        <TableHead className="text-xs">Source</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {customerTx.map(tx => (
-                        <TableRow key={tx.id}>
-                          <TableCell className="text-xs font-mono">{tx.date}</TableCell>
-                          <TableCell className="text-xs text-right font-semibold">{formatCurrency(tx.amount)}</TableCell>
-                          <TableCell><Badge variant="outline" className="text-[9px]">{tx.plan}</Badge></TableCell>
-                          <TableCell>
-                            <Badge className={tx.status === 'succeeded' ? 'bg-emerald-100 text-emerald-700 text-[10px]' : 'bg-red-100 text-red-700 text-[10px]'}>
-                              {tx.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell><Badge variant="outline" className="text-[9px]">{tx.source}</Badge></TableCell>
-                        </TableRow>
+                  {customerTx.length === 0 ? (
+                    <p className="text-xs text-gray-400 text-center py-6">No transactions found</p>
+                  ) : (
+                    <div className="ml-2 relative max-h-[400px] overflow-y-auto pr-2">
+                      {/* Vertical line */}
+                      <div className="absolute left-[7px] top-0 bottom-0 w-px bg-gray-200" />
+
+                      {customerTx.map((tx) => (
+                        <div key={tx.id} className="relative flex items-start gap-3 pb-3">
+                          {/* Dot */}
+                          <div className={`relative z-10 w-[13px] h-[13px] rounded-full border-2 border-white shrink-0 mt-1.5 ${
+                            tx.status === 'succeeded' ? 'bg-emerald-500' :
+                            tx.status === 'refunded' ? 'bg-red-500' :
+                            tx.status === 'failed' ? 'bg-red-500' : 'bg-amber-500'
+                          }`} />
+
+                          {/* Entry card */}
+                          <div className={`flex-1 p-2.5 bg-white border rounded-lg border-l-4 ${
+                            tx.status === 'succeeded' ? 'border-l-emerald-400' :
+                            tx.status === 'refunded' ? 'border-l-red-400' :
+                            tx.status === 'failed' ? 'border-l-red-400' : 'border-l-amber-400'
+                          }`}>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-mono text-gray-400">{tx.date}</span>
+                                <Badge className={`text-[9px] ${
+                                  tx.status === 'succeeded' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+                                }`}>{tx.status}</Badge>
+                                <Badge className={`text-[9px] ${
+                                  tx.source.toLowerCase().startsWith('stripe') ? 'bg-purple-100 text-purple-700' :
+                                  tx.source.toLowerCase().startsWith('taxxo') ? 'bg-blue-100 text-blue-700' :
+                                  'bg-gray-100 text-gray-700'
+                                }`}>{tx.source.split('_')[0]}</Badge>
+                              </div>
+                              <span className={`text-xs font-bold tabular-nums ${
+                                tx.status === 'succeeded' ? 'text-emerald-700' :
+                                tx.status === 'refunded' ? 'text-red-600' : 'text-gray-500'
+                              }`}>
+                                {tx.status === 'refunded' ? '-' : ''}{formatCurrency(tx.amount)}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 mt-1">
+                              <Badge variant="outline" className="text-[9px]">{tx.plan}</Badge>
+                              {tx.invoiceNumber && (
+                                <span className="text-[9px] text-gray-400">FV: {tx.invoiceNumber}</span>
+                              )}
+                              {tx.isFirst && (
+                                <Badge className="bg-[#D9FD13] text-black text-[8px]">First</Badge>
+                              )}
+                            </div>
+                          </div>
+                        </div>
                       ))}
-                    </TableBody>
-                  </Table>
+                    </div>
+                  )}
                 </TabsContent>
 
                 <TabsContent value="revenue" className="mt-3">

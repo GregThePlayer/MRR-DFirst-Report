@@ -11,6 +11,7 @@ import {
   TrendingUp,
   FileSpreadsheet,
   Table2,
+  Clock,
 } from "lucide-react"
 import { Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
   { href: "/", label: "MRR Dashboard", icon: TrendingUp },
   { href: "/revenue", label: "Revenue Details", icon: BarChart3 },
   { href: "/customers", label: "Customers", icon: Users },
+  { href: "/customers/timeline", label: "Activity Timeline", icon: Clock },
   { href: "/products", label: "Products", icon: Package },
   { href: "/transactions", label: "Raw Data", icon: Table2 },
   { href: "/data", label: "Data Sources", icon: Database },
@@ -52,7 +54,7 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 p-3 space-y-0.5">
         {NAV_ITEMS.map((item) => {
-          const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)
+          const isActive = item.href === "/" ? pathname === "/" : pathname === item.href || (pathname.startsWith(item.href + "/") && item.href !== "/customers") || (item.href === "/customers" && pathname === "/customers")
           return (
             <Link
               key={item.href}

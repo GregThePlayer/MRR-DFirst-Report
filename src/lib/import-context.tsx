@@ -1,7 +1,7 @@
 "use client"
 
 import { createContext, useContext, useState, useRef, useCallback, type ReactNode } from "react"
-import { importToSupabase, type RawRow, type ColumnMapping, type ImportResult } from "./import-engine"
+import { importToSupabase, type RawRow, type ColumnMapping, type ImportResult, type SourceType } from "./import-engine"
 import { toast } from "sonner"
 
 export interface ImportSignal {
@@ -16,10 +16,11 @@ interface ImportState {
   result: ImportResult | null
   error: string | null
   sourceLabel: string
+  sourceType: SourceType | null
 }
 
 interface ImportContextValue extends ImportState {
-  startImport: (rows: RawRow[], mappings: ColumnMapping[], sourceLabel: string) => void
+  startImport: (rows: RawRow[], mappings: ColumnMapping[], sourceLabel: string, sourceType?: SourceType) => void
   cancelImport: () => void
   resetImport: () => void
 }
@@ -30,6 +31,7 @@ const INITIAL_STATE: ImportState = {
   result: null,
   error: null,
   sourceLabel: '',
+  sourceType: null,
 }
 
 const ImportContext = createContext<ImportContextValue | null>(null)
@@ -38,8 +40,7 @@ export function ImportProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ImportState>(INITIAL_STATE)
   const signalRef = useRef<ImportSignal>({ cancelled: false })
 
-  const startImport = useCallback((rows: RawRow[], mappings: ColumnMapping[], sourceLabel: string) => {
-    // Reset signal
+  const startImport = useCallback((rows: RawRow[], mappings: ColumnMapping[], sourceLabel: string, sourceType: SourceType = 'stripe') => {
     signalRef.current = { cancelled: false }
 
     setState({
@@ -48,14 +49,14 @@ export function ImportProvider({ children }: { children: ReactNode }) {
       result: null,
       error: null,
       sourceLabel,
+      sourceType,
     })
 
     toast.info(`Import started: ${rows.length} rows`, { duration: 3000 })
 
-    // Run import in the background (not awaited — survives navigation)
     importToSupabase(rows, mappings, sourceLabel, (current, total) => {
       setState(s => ({ ...s, progress: { current, total } }))
-    }, signalRef.current)
+    }, signalRef.current, sourceType)
       .then((result) => {
         if (signalRef.current.cancelled) {
           setState(s => ({ ...s, status: 'cancelled', result }))

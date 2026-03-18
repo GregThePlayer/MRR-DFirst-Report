@@ -1,54 +1,63 @@
 "use client"
 
-import { useState, useCallback, useRef } from "react"
+import { useState, useCallback, useRef, useMemo } from "react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Upload, FileSpreadsheet, CheckCircle, AlertTriangle, ArrowRight, X, Loader2, RefreshCw, StopCircle } from "lucide-react"
-import { parseFile, autoDetectMappings, type RawRow, type ColumnMapping } from "@/lib/import-engine"
+import { Upload, FileSpreadsheet, CheckCircle, AlertTriangle, ArrowRight, X, Loader2, RefreshCw, StopCircle, BarChart3, Receipt, Activity, LineChart, CalendarDays } from "lucide-react"
+import { parseFile, getDefaultMappings, filterRowsByDateRange, TARGET_FIELDS_BY_SOURCE, type RawRow, type ColumnMapping, type SourceType } from "@/lib/import-engine"
 import { isSupabaseConfigured } from "@/lib/supabase"
 import { useImport } from "@/lib/import-context"
 
-type LocalStep = 'upload' | 'preview' | 'mapping'
+type LocalStep = 'upload' | 'daterange' | 'preview' | 'mapping'
 
-const TARGET_FIELDS = [
-  { value: 'transaction_date', label: 'Transaction Date' },
-  { value: 'email', label: 'Customer Email' },
-  { value: 'amount', label: 'Amount (USD)' },
-  { value: 'status', label: 'Status' },
-  { value: 'plan', label: 'Plan / Product' },
-  { value: 'is_subscription', label: 'Is Subscription' },
-  { value: 'is_first_payment', label: 'Is First Payment' },
-  { value: 'stripe_charge_id', label: 'Charge ID' },
-  { value: 'subscription_value', label: 'Subscription Value' },
-  { value: 'ltv', label: 'LTV' },
-  { value: 'pay_count', label: 'Pay Count' },
-  { value: 'currency', label: 'Currency' },
-  { value: 'customer_name', label: 'Customer Name' },
-  { value: 'company', label: 'Company' },
-  { value: 'invoice_number', label: 'Invoice Number' },
-  { value: '', label: '— Skip column —' },
+const SOURCE_CARDS: { type: SourceType; label: string; sublabel: string; desc: string; icon: typeof BarChart3; color: string; bgColor: string }[] = [
+  { type: 'stripe', label: 'Stripe', sublabel: 'Payment CSV', desc: 'DF.AI Stripe export with transactions, plans, and LTV data', icon: BarChart3, color: 'text-purple-600', bgColor: 'bg-purple-50' },
+  { type: 'taxxo', label: 'Taxxo', sublabel: 'Invoices XLSX', desc: 'Faktury z systemu Taxxo — Netto, Brutto, PLN amounts', icon: Receipt, color: 'text-blue-600', bgColor: 'bg-blue-50' },
+  { type: 'mixpanel', label: 'Mixpanel', sublabel: 'Events CSV', desc: 'User events and engagement data (placeholder)', icon: Activity, color: 'text-orange-600', bgColor: 'bg-orange-50' },
+  { type: 'ga4', label: 'GA4', sublabel: 'Analytics CSV', desc: 'Google Analytics 4 sessions and traffic sources (placeholder)', icon: LineChart, color: 'text-emerald-600', bgColor: 'bg-emerald-50' },
 ]
 
 export default function ImportPage() {
   const importCtx = useImport()
   const [localStep, setLocalStep] = useState<LocalStep>('upload')
+  const [sourceType, setSourceType] = useState<SourceType | null>(null)
   const [fileName, setFileName] = useState("")
   const [dragOver, setDragOver] = useState(false)
+  const [allRows, setAllRows] = useState<RawRow[]>([])
   const [rows, setRows] = useState<RawRow[]>([])
   const [columns, setColumns] = useState<string[]>([])
   const [mappings, setMappings] = useState<ColumnMapping[]>([])
   const [error, setError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Determine effective step: local steps for pre-import, context-driven for import/done
+  // Date range state for Stripe
+  const [dateFrom, setDateFrom] = useState("")
+  const [dateTo, setDateTo] = useState("")
+
   const isImporting = importCtx.status === 'importing'
   const isDone = importCtx.status === 'done' || importCtx.status === 'cancelled'
   const isError = importCtx.status === 'error'
   const effectiveStep = isImporting ? 'importing' : (isDone || isError) ? 'done' : localStep
 
+  // Initialize default date range (last 6 months)
+  const getDefaultDateRange = useCallback(() => {
+    const now = new Date()
+    const sixMonthsAgo = new Date(now)
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6)
+    return {
+      from: sixMonthsAgo.toISOString().slice(0, 10),
+      to: now.toISOString().slice(0, 10),
+    }
+  }, [])
+
   const handleFile = useCallback(async (file: File) => {
+    if (!sourceType) {
+      setError("Please select a source type first")
+      return
+    }
     setError(null)
     setFileName(file.name)
     try {
@@ -57,15 +66,26 @@ export default function ImportPage() {
         setError("File is empty or could not be parsed")
         return
       }
-      setRows(parsed)
+      setAllRows(parsed)
       setColumns(cols)
-      const detected = autoDetectMappings(cols)
+      const detected = getDefaultMappings(sourceType, cols)
       setMappings(detected)
-      setLocalStep('preview')
+
+      if (sourceType === 'stripe') {
+        // Show date range step
+        const defaults = getDefaultDateRange()
+        setDateFrom(defaults.from)
+        setDateTo(defaults.to)
+        setRows(parsed) // will be filtered in daterange step
+        setLocalStep('daterange')
+      } else {
+        setRows(parsed)
+        setLocalStep('preview')
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to parse file")
     }
-  }, [])
+  }, [sourceType, getDefaultDateRange])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -78,6 +98,27 @@ export default function ImportPage() {
     const file = e.target.files?.[0]
     if (file) handleFile(file)
   }, [handleFile])
+
+  // Filtered row count for date range step
+  const dateColumn = useMemo(() => {
+    const dateMapping = mappings.find(m => m.targetField === 'transaction_date' || m.targetField === 'date')
+    return dateMapping?.sourceColumn || ''
+  }, [mappings])
+
+  const filteredRowCount = useMemo(() => {
+    if (!dateColumn || !dateFrom || !dateTo) return allRows.length
+    return filterRowsByDateRange(allRows, dateColumn, dateFrom, dateTo).length
+  }, [allRows, dateColumn, dateFrom, dateTo])
+
+  const applyDateFilter = () => {
+    if (dateColumn && dateFrom && dateTo) {
+      const filtered = filterRowsByDateRange(allRows, dateColumn, dateFrom, dateTo)
+      setRows(filtered)
+    } else {
+      setRows(allRows)
+    }
+    setLocalStep('preview')
+  }
 
   const updateMapping = (sourceColumn: string, newTarget: string) => {
     setMappings(prev => {
@@ -93,25 +134,29 @@ export default function ImportPage() {
   }
 
   const startImport = () => {
+    if (!sourceType) return
     const now = new Date().toISOString().slice(0, 10)
-    const sourceLabel = fileName.toLowerCase().includes('stripe') ? `stripe_${now}` :
-      fileName.toLowerCase().includes('invoice') || fileName.toLowerCase().includes('faktur') ? `invoice_${now}` : `csv_import_${now}`
-
-    importCtx.startImport(rows, mappings, sourceLabel)
+    const sourceLabel = `${sourceType}_${now}`
+    importCtx.startImport(rows, mappings, sourceLabel, sourceType)
   }
 
   const reset = () => {
     importCtx.resetImport()
     setLocalStep('upload')
+    setSourceType(null)
     setFileName('')
+    setAllRows([])
     setRows([])
     setColumns([])
     setMappings([])
     setError(null)
+    setDateFrom('')
+    setDateTo('')
   }
 
   const STEPS = [
-    { key: 'upload', label: 'Upload File' },
+    { key: 'upload', label: 'Source & Upload' },
+    ...(sourceType === 'stripe' ? [{ key: 'daterange', label: 'Date Range' }] : []),
     { key: 'preview', label: 'Preview Data' },
     { key: 'mapping', label: 'Map Columns' },
     { key: 'importing', label: 'Import' },
@@ -120,12 +165,13 @@ export default function ImportPage() {
 
   const supabaseOk = isSupabaseConfigured()
   const result = importCtx.result
+  const targetFields = sourceType ? TARGET_FIELDS_BY_SOURCE[sourceType] : []
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-black tracking-tight">Import Data</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Import transactions from Stripe CSV, invoice XLSX, or other sources</p>
+        <p className="text-sm text-gray-500 mt-0.5">Import transactions from Stripe, Taxxo invoices, Mixpanel, or GA4</p>
       </div>
 
       {!supabaseOk && (
@@ -138,7 +184,7 @@ export default function ImportPage() {
       )}
 
       {/* Steps */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         {STEPS.map((s, i) => (
           <div key={s.key} className="flex items-center gap-2">
             <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${
@@ -168,63 +214,123 @@ export default function ImportPage() {
 
       {effectiveStep === 'upload' && (
         <>
-          <Card
-            className={`p-12 border-2 border-dashed shadow-none text-center cursor-pointer transition-colors ${
-              dragOver ? 'border-[#D9FD13] bg-[#D9FD13]/5' : 'border-gray-200 bg-white hover:border-gray-300'
-            }`}
-            onDragOver={e => { e.preventDefault(); setDragOver(true) }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Upload className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-            <p className="text-sm font-medium text-gray-700">
-              Drag & drop your file here, or click to browse
-            </p>
-            <p className="text-xs text-gray-400 mt-1">
-              Supports .csv, .xlsx, .xls files
-            </p>
-          </Card>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card className="p-4 bg-white border border-gray-100 shadow-none hover:border-gray-200 cursor-pointer transition-colors"
-              onClick={() => fileInputRef.current?.click()}>
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-purple-50 rounded-lg flex items-center justify-center">
-                  <FileSpreadsheet className="w-5 h-5 text-purple-600" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Stripe CSV</p>
-                  <p className="text-xs text-gray-400">DF.AI Data 2025/2026 export</p>
-                </div>
-              </div>
-            </Card>
-            <Card className="p-4 bg-white border border-gray-100 shadow-none hover:border-gray-200 cursor-pointer transition-colors"
-              onClick={() => fileInputRef.current?.click()}>
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center">
-                  <FileSpreadsheet className="w-5 h-5 text-blue-600" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Invoice XLSX (Taxxo)</p>
-                  <p className="text-xs text-gray-400">Faktury z systemu Taxxo</p>
-                </div>
-              </div>
-            </Card>
-            <Card className="p-4 bg-white border border-gray-100 shadow-none hover:border-gray-200 cursor-pointer transition-colors"
-              onClick={() => fileInputRef.current?.click()}>
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-emerald-50 rounded-lg flex items-center justify-center">
-                  <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Enterprise Invoices</p>
-                  <p className="text-xs text-gray-400">Manual FV for enterprise clients</p>
-                </div>
-              </div>
-            </Card>
+          {/* Source type selection */}
+          <div>
+            <h3 className="text-sm font-semibold mb-3">1. Select data source</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+              {SOURCE_CARDS.map(sc => (
+                <Card
+                  key={sc.type}
+                  className={`p-4 bg-white shadow-none cursor-pointer transition-all ${
+                    sourceType === sc.type
+                      ? 'border-2 border-black ring-1 ring-black'
+                      : 'border border-gray-100 hover:border-gray-300'
+                  }`}
+                  onClick={() => setSourceType(sc.type)}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className={`w-10 h-10 ${sc.bgColor} rounded-lg flex items-center justify-center shrink-0`}>
+                      <sc.icon className={`w-5 h-5 ${sc.color}`} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold">{sc.label}</p>
+                      <p className="text-[10px] text-gray-400 font-medium">{sc.sublabel}</p>
+                      <p className="text-[11px] text-gray-500 mt-1 leading-tight">{sc.desc}</p>
+                    </div>
+                  </div>
+                  {sourceType === sc.type && (
+                    <div className="mt-2 flex items-center gap-1">
+                      <CheckCircle className="w-3 h-3 text-emerald-600" />
+                      <span className="text-[10px] text-emerald-600 font-medium">Selected</span>
+                    </div>
+                  )}
+                </Card>
+              ))}
+            </div>
           </div>
+
+          {/* File upload */}
+          {sourceType && (
+            <div>
+              <h3 className="text-sm font-semibold mb-3">2. Upload file</h3>
+              <Card
+                className={`p-12 border-2 border-dashed shadow-none text-center cursor-pointer transition-colors ${
+                  dragOver ? 'border-[#D9FD13] bg-[#D9FD13]/5' : 'border-gray-200 bg-white hover:border-gray-300'
+                }`}
+                onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                <p className="text-sm font-medium text-gray-700">
+                  Drag & drop your {sourceType === 'taxxo' ? 'XLSX' : 'CSV'} file here, or click to browse
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Supports .csv, .xlsx, .xls files
+                </p>
+              </Card>
+            </div>
+          )}
         </>
+      )}
+
+      {/* Date Range step (Stripe only) */}
+      {effectiveStep === 'daterange' && (
+        <Card className="bg-white border border-gray-100 shadow-none p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <CalendarDays className="w-4 h-4 text-gray-500" />
+            <h3 className="font-semibold text-sm">Filter by Date Range</h3>
+          </div>
+          <p className="text-xs text-gray-500 mb-4">
+            Select the date range for your Stripe import. Only rows within this range will be imported.
+          </p>
+
+          <div className="flex items-center gap-4 mb-4">
+            <div className="space-y-1">
+              <label className="text-xs text-gray-500 font-medium">Import from</label>
+              <Input
+                type="date"
+                value={dateFrom}
+                onChange={e => setDateFrom(e.target.value)}
+                className="h-8 text-xs w-[160px]"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-gray-500 font-medium">Import to</label>
+              <Input
+                type="date"
+                value={dateTo}
+                onChange={e => setDateTo(e.target.value)}
+                className="h-8 text-xs w-[160px]"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4 mb-6">
+            <div className="p-3 bg-gray-50 rounded-lg">
+              <p className="text-lg font-bold">{allRows.length}</p>
+              <p className="text-[10px] text-gray-400">Total rows in file</p>
+            </div>
+            <ArrowRight className="w-4 h-4 text-gray-300" />
+            <div className="p-3 bg-emerald-50 rounded-lg">
+              <p className="text-lg font-bold text-emerald-700">{filteredRowCount}</p>
+              <p className="text-[10px] text-emerald-600">Rows in selected range</p>
+            </div>
+            {allRows.length - filteredRowCount > 0 && (
+              <Badge className="bg-amber-100 text-amber-700 text-[10px]">
+                {allRows.length - filteredRowCount} rows excluded
+              </Badge>
+            )}
+          </div>
+
+          <div className="flex justify-between">
+            <Button variant="outline" onClick={reset}>Back</Button>
+            <Button className="bg-black text-white hover:bg-gray-800" onClick={applyDateFilter}>
+              Continue with {filteredRowCount} rows <ArrowRight className="w-4 h-4 ml-1" />
+            </Button>
+          </div>
+        </Card>
       )}
 
       {effectiveStep === 'preview' && (
@@ -235,6 +341,7 @@ export default function ImportPage() {
               <span className="font-medium text-sm">{fileName}</span>
               <Badge variant="outline" className="text-[10px]">{rows.length} rows</Badge>
               <Badge variant="outline" className="text-[10px]">{columns.length} columns</Badge>
+              {sourceType && <Badge className="bg-black text-white text-[10px]">{sourceType}</Badge>}
               {mappings.length > 0 && (
                 <Badge className="bg-emerald-100 text-emerald-700 text-[10px]">{mappings.length} auto-mapped</Badge>
               )}
@@ -247,16 +354,19 @@ export default function ImportPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  {columns.slice(0, 8).map(col => (
-                    <TableHead key={col} className="text-xs whitespace-nowrap">
-                      {col}
-                      {mappings.find(m => m.sourceColumn === col) && (
-                        <span className="block text-[9px] text-emerald-600 font-normal">
-                          → {mappings.find(m => m.sourceColumn === col)?.targetField}
-                        </span>
-                      )}
-                    </TableHead>
-                  ))}
+                  {columns.slice(0, 8).map(col => {
+                    const isAutoMapped = !!mappings.find(m => m.sourceColumn === col && m.autoDetected)
+                    return (
+                      <TableHead key={col} className={`text-xs whitespace-nowrap ${isAutoMapped ? 'bg-emerald-50' : ''}`}>
+                        {col}
+                        {mappings.find(m => m.sourceColumn === col) && (
+                          <span className="block text-[9px] text-emerald-600 font-normal">
+                            &rarr; {mappings.find(m => m.sourceColumn === col)?.targetField}
+                          </span>
+                        )}
+                      </TableHead>
+                    )
+                  })}
                   {columns.length > 8 && <TableHead className="text-xs text-gray-400">+{columns.length - 8} more</TableHead>}
                 </TableRow>
               </TableHeader>
@@ -278,7 +388,10 @@ export default function ImportPage() {
             )}
           </div>
           <div className="p-4 border-t border-gray-100 flex justify-between">
-            <Button variant="outline" onClick={reset}>Back</Button>
+            <Button variant="outline" onClick={() => {
+              if (sourceType === 'stripe') setLocalStep('daterange')
+              else reset()
+            }}>Back</Button>
             <Button className="bg-black text-white hover:bg-gray-800" onClick={() => setLocalStep('mapping')}>
               Continue to Column Mapping <ArrowRight className="w-4 h-4 ml-1" />
             </Button>
@@ -288,7 +401,7 @@ export default function ImportPage() {
 
       {effectiveStep === 'mapping' && (
         <Card className="bg-white border border-gray-100 shadow-none p-6">
-          <h3 className="font-semibold text-sm mb-1">Column Mapping</h3>
+          <h3 className="font-semibold text-sm mb-1">Column Mapping — {sourceType?.toUpperCase()}</h3>
           <p className="text-xs text-gray-500 mb-4">
             Map source columns to system fields. Unmapped columns are stored in raw_data.
             <span className="text-emerald-600 font-medium"> {mappings.filter(m => m.autoDetected).length} auto-detected.</span>
@@ -297,8 +410,8 @@ export default function ImportPage() {
             {columns.map(col => {
               const mapping = mappings.find(m => m.sourceColumn === col)
               return (
-                <div key={col} className="flex items-center gap-3 p-2 bg-gray-50 rounded">
-                  <Badge variant="outline" className="font-mono text-xs min-w-[180px] justify-start">{col}</Badge>
+                <div key={col} className={`flex items-center gap-3 p-2 rounded ${mapping?.autoDetected ? 'bg-emerald-50' : 'bg-gray-50'}`}>
+                  <Badge variant="outline" className="font-mono text-xs min-w-[180px] justify-start truncate max-w-[240px]">{col}</Badge>
                   <ArrowRight className="w-3 h-3 text-gray-400 shrink-0" />
                   <select
                     className="text-xs border rounded px-2 py-1.5 bg-white min-w-[180px]"
@@ -306,7 +419,7 @@ export default function ImportPage() {
                     onChange={e => updateMapping(col, e.target.value)}
                   >
                     <option value="">— Skip —</option>
-                    {TARGET_FIELDS.filter(f => f.value).map(f => (
+                    {targetFields.filter(f => f.value).map(f => (
                       <option key={f.value} value={f.value}>{f.label}</option>
                     ))}
                   </select>
@@ -318,7 +431,7 @@ export default function ImportPage() {
             })}
           </div>
 
-          {!mappings.find(m => m.targetField === 'transaction_date') && (
+          {!mappings.find(m => m.targetField === 'transaction_date') && sourceType !== 'mixpanel' && sourceType !== 'ga4' && (
             <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 text-amber-600" />
@@ -332,7 +445,10 @@ export default function ImportPage() {
             <Button
               className="bg-black text-white hover:bg-gray-800"
               onClick={startImport}
-              disabled={!mappings.find(m => m.targetField === 'transaction_date') || !mappings.find(m => m.targetField === 'amount')}
+              disabled={
+                (sourceType === 'stripe' || sourceType === 'taxxo') &&
+                (!mappings.find(m => m.targetField === 'transaction_date') || !mappings.find(m => m.targetField === 'amount'))
+              }
             >
               Start Import ({rows.length} rows) <ArrowRight className="w-4 h-4 ml-1" />
             </Button>

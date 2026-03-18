@@ -8,6 +8,8 @@ import type { Product, ProductAlias } from '@/types/database'
 type AnySupabase = any
 
 // ─── Types ───
+export type SourceType = 'stripe' | 'taxxo' | 'mixpanel' | 'ga4'
+
 export interface RawRow {
   [key: string]: string | number | undefined
 }
@@ -28,41 +30,112 @@ export interface ImportResult {
   productsMatched: number
 }
 
-// Known Stripe CSV column names → target fields
+// ─── Source-specific column maps ───
 const STRIPE_COLUMN_MAP: Record<string, string> = {
   'date': 'transaction_date',
-  'created (utc)': 'transaction_date',
   'customer email': 'email',
-  'email': 'email',
   'kwota zakupu': 'amount',
-  'amount': 'amount',
-  'amount refunded': 'amount_refunded',
   'charge status': 'status',
-  'status': 'status',
   'plan': 'plan',
-  'product': 'plan',
-  'subscription plan': 'plan',
   'subskrypcja': 'is_subscription',
-  'subscription': 'is_subscription',
-  'czy to pierwsza płatność': 'is_first_payment',
-  'is first payment': 'is_first_payment',
-  'first payment': 'is_first_payment',
-  'customer': 'customer_name',
-  'customer name': 'customer_name',
-  'company': 'company',
-  'stripe charge id': 'stripe_charge_id',
+  'czy to pierwsza płatność (0-nie, 1 tak)': 'is_first_payment',
   'charge id': 'stripe_charge_id',
-  'id': 'stripe_charge_id',
-  'subscription value': 'subscription_value',
   'wartość subskrypcji': 'subscription_value',
   'ltv': 'ltv',
-  'lifetime value': 'ltv',
-  'pay count': 'pay_count',
-  'liczba płatności': 'pay_count',
-  'currency': 'currency',
-  'waluta': 'currency',
-  'invoice number': 'invoice_number',
+  'liczba udanych płatnosci klienta': 'pay_count',
+  'charge currency': 'currency',
+  'transaction id': 'source_id',
+  'customer id': 'stripe_customer_id',
+  'czy plan roczny': 'billing_period',
+}
+
+const TAXXO_COLUMN_MAP: Record<string, string> = {
   'numer faktury': 'invoice_number',
+  'kontrahent': 'company',
+  'adres kontrahenta': 'address',
+  'data wystawienia': 'transaction_date',
+  'data dostawy / usługi': 'service_date',
+  'termin płatności': 'payment_due',
+  'netto': 'amount',
+  'łącznie podatek': 'tax_amount',
+  'brutto': 'gross_amount',
+  'waluta': 'currency',
+  'netto w pln': 'amount_pln',
+  'vat': 'vat_pln',
+  'brutto w pln': 'gross_pln',
+}
+
+const MIXPANEL_COLUMN_MAP: Record<string, string> = {
+  'date': 'date',
+  'event': 'event_name',
+  'user id': 'user_id',
+  'email': 'email',
+}
+
+const GA4_COLUMN_MAP: Record<string, string> = {
+  'date': 'date',
+  'users': 'users',
+  'sessions': 'sessions',
+  'source': 'source',
+}
+
+const SOURCE_MAPS: Record<SourceType, Record<string, string>> = {
+  stripe: STRIPE_COLUMN_MAP,
+  taxxo: TAXXO_COLUMN_MAP,
+  mixpanel: MIXPANEL_COLUMN_MAP,
+  ga4: GA4_COLUMN_MAP,
+}
+
+// Target fields per source type
+export const TARGET_FIELDS_BY_SOURCE: Record<SourceType, { value: string; label: string }[]> = {
+  stripe: [
+    { value: 'transaction_date', label: 'Transaction Date' },
+    { value: 'email', label: 'Customer Email' },
+    { value: 'amount', label: 'Amount' },
+    { value: 'status', label: 'Status' },
+    { value: 'plan', label: 'Plan / Product' },
+    { value: 'is_subscription', label: 'Is Subscription' },
+    { value: 'is_first_payment', label: 'Is First Payment' },
+    { value: 'stripe_charge_id', label: 'Charge ID' },
+    { value: 'subscription_value', label: 'Subscription Value' },
+    { value: 'ltv', label: 'LTV' },
+    { value: 'pay_count', label: 'Pay Count' },
+    { value: 'currency', label: 'Currency' },
+    { value: 'source_id', label: 'Transaction ID' },
+    { value: 'stripe_customer_id', label: 'Stripe Customer ID' },
+    { value: 'billing_period', label: 'Billing Period' },
+    { value: '', label: '— Skip column —' },
+  ],
+  taxxo: [
+    { value: 'transaction_date', label: 'Issue Date (Transaction Date)' },
+    { value: 'invoice_number', label: 'Invoice Number' },
+    { value: 'company', label: 'Company' },
+    { value: 'address', label: 'Address' },
+    { value: 'service_date', label: 'Service Date' },
+    { value: 'payment_due', label: 'Payment Due' },
+    { value: 'amount', label: 'Amount (Netto)' },
+    { value: 'tax_amount', label: 'Tax Amount' },
+    { value: 'gross_amount', label: 'Gross Amount' },
+    { value: 'currency', label: 'Currency' },
+    { value: 'amount_pln', label: 'Netto PLN' },
+    { value: 'vat_pln', label: 'VAT PLN' },
+    { value: 'gross_pln', label: 'Gross PLN' },
+    { value: '', label: '— Skip column —' },
+  ],
+  mixpanel: [
+    { value: 'date', label: 'Date' },
+    { value: 'event_name', label: 'Event Name' },
+    { value: 'user_id', label: 'User ID' },
+    { value: 'email', label: 'Email' },
+    { value: '', label: '— Skip column —' },
+  ],
+  ga4: [
+    { value: 'date', label: 'Date' },
+    { value: 'users', label: 'Users' },
+    { value: 'sessions', label: 'Sessions' },
+    { value: 'source', label: 'Source' },
+    { value: '', label: '— Skip column —' },
+  ],
 }
 
 // ─── Parse file to rows ───
@@ -87,14 +160,16 @@ export function parseFile(file: File): Promise<{ rows: RawRow[]; columns: string
   })
 }
 
-// ─── Auto-detect column mappings ───
-export function autoDetectMappings(columns: string[]): ColumnMapping[] {
+// ─── Get default mappings for a source type ───
+export function getDefaultMappings(sourceType: SourceType, columns: string[]): ColumnMapping[] {
+  const sourceMap = SOURCE_MAPS[sourceType]
   const mappings: ColumnMapping[] = []
   const usedTargets = new Set<string>()
 
   for (const col of columns) {
     const normalized = col.toLowerCase().trim()
-    const target = STRIPE_COLUMN_MAP[normalized]
+    // Exact match first
+    const target = sourceMap[normalized]
     if (target && !usedTargets.has(target)) {
       mappings.push({ sourceColumn: col, targetField: target, autoDetected: true })
       usedTargets.add(target)
@@ -102,6 +177,26 @@ export function autoDetectMappings(columns: string[]): ColumnMapping[] {
   }
 
   return mappings
+}
+
+// ─── Legacy auto-detect (delegates to stripe) ───
+export function autoDetectMappings(columns: string[]): ColumnMapping[] {
+  return getDefaultMappings('stripe', columns)
+}
+
+// ─── Date range filter ───
+export function filterRowsByDateRange(
+  rows: RawRow[],
+  dateColumn: string,
+  startDate: string,
+  endDate: string
+): RawRow[] {
+  return rows.filter(row => {
+    const raw = String(row[dateColumn] ?? '').trim()
+    const parsed = parseDate(raw)
+    if (!parsed) return false
+    return parsed >= startDate && parsed <= endDate
+  })
 }
 
 // ─── Import engine ───
@@ -114,12 +209,12 @@ export async function importToSupabase(
   mappings: ColumnMapping[],
   sourceLabel: string,
   onProgress?: (current: number, total: number) => void,
-  signal?: ImportSignal
+  signal?: ImportSignal,
+  sourceType: SourceType = 'stripe'
 ): Promise<ImportResult> {
   if (!supabase) {
     return { totalRows: rows.length, imported: 0, skipped: rows.length, errors: ['Supabase not configured'], customersCreated: 0, customersMatched: 0, productsMatched: 0 }
   }
-  // Cast to bypass strict supabase-js v2.99 generic types
   const db = supabase as AnySupabase
 
   const result: ImportResult = {
@@ -144,6 +239,30 @@ export async function importToSupabase(
     return String(row[col] ?? '').trim()
   }
 
+  // Route based on source type
+  if (sourceType === 'mixpanel' || sourceType === 'ga4') {
+    return await importMarketingMetrics(rows, fieldMap, sourceLabel, sourceType, onProgress, signal, result)
+  }
+
+  if (sourceType === 'taxxo') {
+    return await importTaxxo(rows, getField, fieldMap, sourceLabel, onProgress, signal, result, db)
+  }
+
+  // Default: stripe import
+  return await importStripe(rows, getField, fieldMap, sourceLabel, onProgress, signal, result, db)
+}
+
+// ─── Stripe import ───
+async function importStripe(
+  rows: RawRow[],
+  getField: (row: RawRow, target: string) => string,
+  fieldMap: Map<string, string>,
+  sourceLabel: string,
+  onProgress: ((current: number, total: number) => void) | undefined,
+  signal: ImportSignal | undefined,
+  result: ImportResult,
+  db: AnySupabase
+): Promise<ImportResult> {
   // Load products & aliases for matching
   const { data: products } = await db.from('products').select('*')
   const { data: aliases } = await db.from('product_aliases').select('*')
@@ -178,15 +297,11 @@ export async function importToSupabase(
   const BATCH_SIZE = 50
 
   for (let i = 0; i < rows.length; i++) {
-    // Check for cancellation
-    if (signal?.cancelled) {
-      break
-    }
+    if (signal?.cancelled) break
 
     const row = rows[i]
 
     try {
-      // Extract fields
       const dateStr = getField(row, 'transaction_date')
       const email = getField(row, 'email').toLowerCase()
       const amountStr = getField(row, 'amount')
@@ -199,15 +314,15 @@ export async function importToSupabase(
       const ltv = getField(row, 'ltv')
       const payCount = getField(row, 'pay_count')
       const currency = getField(row, 'currency') || 'USD'
+      const sourceId = getField(row, 'source_id')
+      const stripeCustomerId = getField(row, 'stripe_customer_id')
       const company = getField(row, 'company') || getField(row, 'customer_name')
 
-      // Validate required fields
       if (!dateStr || !amountStr) {
         result.skipped++
         continue
       }
 
-      // Parse date
       const parsedDate = parseDate(dateStr)
       if (!parsedDate) {
         result.errors.push(`Row ${i + 1}: Invalid date "${dateStr}"`)
@@ -215,7 +330,6 @@ export async function importToSupabase(
         continue
       }
 
-      // Parse amount
       const amount = parseAmount(amountStr)
       if (amount === null) {
         result.errors.push(`Row ${i + 1}: Invalid amount "${amountStr}"`)
@@ -223,7 +337,6 @@ export async function importToSupabase(
         continue
       }
 
-      // Dedup check
       const rowHash = simpleHash(`${dateStr}|${email}|${amount}|${plan}|${chargeId}`)
       if (existingHashes.has(rowHash)) {
         result.skipped++
@@ -246,12 +359,12 @@ export async function importToSupabase(
               source: sourceLabel,
               first_seen_at: parsedDate,
               last_active_at: parsedDate,
+              stripe_customer_id: stripeCustomerId || null,
             })
             .select('id')
             .single()
 
           if (custErr) {
-            // Maybe race condition, try to fetch
             const { data: found } = await db.from('customers').select('id').eq('email', email).single()
             if (found) {
               customerId = found.id
@@ -271,7 +384,6 @@ export async function importToSupabase(
       if (plan) {
         productId = aliasToProduct.get(plan.toLowerCase()) || null
         if (!productId) {
-          // Try partial match
           for (const [alias, pid] of aliasToProduct) {
             if (plan.toLowerCase().includes(alias) || alias.includes(plan.toLowerCase())) {
               productId = pid
@@ -282,9 +394,12 @@ export async function importToSupabase(
         if (productId) matchedProductIds.add(productId)
       }
 
-      // Determine billing type from product or plan name
+      // Determine billing type
       let billingType: 'monthly' | 'annual' | 'one_time' = 'monthly'
-      if (plan) {
+      const billingPeriod = getField(row, 'billing_period').toLowerCase()
+      if (billingPeriod.includes('roczn') || billingPeriod.includes('annual') || billingPeriod.includes('1r') || billingPeriod.includes('1y')) {
+        billingType = 'annual'
+      } else if (plan) {
         const planLower = plan.toLowerCase()
         if (planLower.includes('1r') || planLower.includes('1y') || planLower.includes('annual') || planLower.includes('roczn')) {
           billingType = 'annual'
@@ -299,10 +414,9 @@ export async function importToSupabase(
       else if (status.includes('refund')) txStatus = 'refunded'
       else if (status.includes('pend')) txStatus = 'pending'
 
-      // Insert transaction
       const { error: txErr } = await db.from('transactions').insert({
         source: sourceLabel,
-        source_id: chargeId || null,
+        source_id: sourceId || chargeId || null,
         source_row_hash: rowHash,
         customer_id: customerId,
         product_id: productId,
@@ -317,7 +431,7 @@ export async function importToSupabase(
         raw_data: row as Record<string, unknown>,
         stripe_charge_id: chargeId || null,
         stripe_subscription_value: subValue ? parseFloat(subValue) || null : null,
-        stripe_ltv: ltv ? parseFloat(ltv) || null : null,
+        stripe_ltv: ltv ? parseFloat(ltv.replace(/[^0-9.,\-]/g, '').replace(',', '.')) || null : null,
         stripe_pay_count: payCount ? parseInt(payCount) || null : null,
       })
 
@@ -328,7 +442,6 @@ export async function importToSupabase(
         result.imported++
       }
 
-      // Update customer last_active_at
       if (customerId && txStatus === 'succeeded') {
         await db
           .from('customers')
@@ -352,6 +465,197 @@ export async function importToSupabase(
   return result
 }
 
+// ─── Taxxo (Invoice) import ───
+async function importTaxxo(
+  rows: RawRow[],
+  getField: (row: RawRow, target: string) => string,
+  fieldMap: Map<string, string>,
+  sourceLabel: string,
+  onProgress: ((current: number, total: number) => void) | undefined,
+  signal: ImportSignal | undefined,
+  result: ImportResult,
+  db: AnySupabase
+): Promise<ImportResult> {
+  // Customer cache: company_name → id
+  const customerCache = new Map<string, string>()
+  const { data: existingCustomers } = await db.from('customers').select('id, company_name')
+  for (const c of (existingCustomers || [])) {
+    if (c.company_name) customerCache.set(c.company_name.toLowerCase(), c.id)
+  }
+
+  // Dedup
+  const existingHashes = new Set<string>()
+  const { data: existingTx } = await db.from('transactions').select('source_row_hash').not('source_row_hash', 'is', null)
+  for (const t of (existingTx || [])) {
+    if (t.source_row_hash) existingHashes.add(t.source_row_hash)
+  }
+
+  const BATCH_SIZE = 50
+
+  for (let i = 0; i < rows.length; i++) {
+    if (signal?.cancelled) break
+
+    const row = rows[i]
+
+    try {
+      const invoiceNumber = getField(row, 'invoice_number')
+      const company = getField(row, 'company')
+      const address = getField(row, 'address')
+      const dateStr = getField(row, 'transaction_date')
+      const serviceDate = getField(row, 'service_date')
+      const paymentDue = getField(row, 'payment_due')
+      const amountStr = getField(row, 'amount')
+      const taxAmountStr = getField(row, 'tax_amount')
+      const grossAmountStr = getField(row, 'gross_amount')
+      const currency = getField(row, 'currency') || 'USD'
+      const amountPlnStr = getField(row, 'amount_pln')
+      const vatPlnStr = getField(row, 'vat_pln')
+      const grossPlnStr = getField(row, 'gross_pln')
+
+      if (!dateStr || !amountStr) {
+        result.skipped++
+        continue
+      }
+
+      const parsedDate = parseDate(dateStr)
+      if (!parsedDate) {
+        result.errors.push(`Row ${i + 1}: Invalid date "${dateStr}"`)
+        result.skipped++
+        continue
+      }
+
+      const amount = parseAmount(amountStr)
+      if (amount === null) {
+        result.errors.push(`Row ${i + 1}: Invalid amount "${amountStr}"`)
+        result.skipped++
+        continue
+      }
+
+      const rowHash = simpleHash(`${invoiceNumber}|${company}|${amount}|${dateStr}`)
+      if (existingHashes.has(rowHash)) {
+        result.skipped++
+        continue
+      }
+      existingHashes.add(rowHash)
+
+      // Detect credit notes: FV/K prefix or negative amount = refund
+      const isCreditNote = invoiceNumber.toUpperCase().startsWith('FV/K') || amount < 0
+      const txType: 'payment' | 'refund' | 'credit_note' = isCreditNote ? 'credit_note' : 'payment'
+      const txStatus: 'succeeded' | 'failed' | 'pending' | 'refunded' = isCreditNote ? 'refunded' : 'succeeded'
+
+      // Match or create customer by company name
+      let customerId: string | null = null
+      if (company) {
+        const companyLower = company.toLowerCase()
+        if (customerCache.has(companyLower)) {
+          customerId = customerCache.get(companyLower)!
+          result.customersMatched++
+        } else {
+          const { data: newCust, error: custErr } = await db
+            .from('customers')
+            .insert({
+              company_name: company,
+              address: address || null,
+              source: sourceLabel,
+              first_seen_at: parsedDate,
+              last_active_at: parsedDate,
+            })
+            .select('id')
+            .single()
+
+          if (custErr) {
+            const { data: found } = await db.from('customers').select('id').eq('company_name', company).single()
+            if (found) {
+              customerId = found.id
+              customerCache.set(companyLower, found.id)
+              result.customersMatched++
+            }
+          } else if (newCust) {
+            customerId = newCust.id
+            customerCache.set(companyLower, newCust.id)
+            result.customersCreated++
+          }
+        }
+      }
+
+      // Parse PLN amounts
+      const amountPln = parseAmount(amountPlnStr)
+      const vatPln = parseAmount(vatPlnStr)
+      const grossPln = parseAmount(grossPlnStr)
+
+      const { error: txErr } = await db.from('transactions').insert({
+        source: sourceLabel,
+        source_id: invoiceNumber || null,
+        source_row_hash: rowHash,
+        customer_id: customerId,
+        product_id: null,
+        amount_usd: Math.abs(amount),
+        amount_pln: amountPln !== null ? Math.abs(amountPln) : null,
+        currency: currency.toUpperCase(),
+        transaction_type: txType,
+        billing_type: 'one_time' as const,
+        is_subscription: false,
+        is_first_payment: false,
+        status: txStatus,
+        transaction_date: parsedDate,
+        raw_data: row as Record<string, unknown>,
+        invoice_number: invoiceNumber || null,
+        invoice_net_pln: amountPln,
+        invoice_gross_pln: grossPln,
+        invoice_tax_pln: vatPln,
+      })
+
+      if (txErr) {
+        result.errors.push(`Row ${i + 1}: ${txErr.message}`)
+        result.skipped++
+      } else {
+        result.imported++
+      }
+
+      if (customerId && txStatus === 'succeeded') {
+        await db
+          .from('customers')
+          .update({ last_active_at: parsedDate })
+          .eq('id', customerId)
+          .lt('last_active_at', parsedDate)
+      }
+    } catch (err) {
+      result.errors.push(`Row ${i + 1}: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      result.skipped++
+    }
+
+    if (onProgress && i % BATCH_SIZE === 0) {
+      onProgress(i + 1, rows.length)
+    }
+  }
+
+  if (onProgress) onProgress(rows.length, rows.length)
+  return result
+}
+
+// ─── Marketing metrics import (Mixpanel / GA4 placeholder) ───
+async function importMarketingMetrics(
+  rows: RawRow[],
+  fieldMap: Map<string, string>,
+  sourceLabel: string,
+  sourceType: SourceType,
+  onProgress: ((current: number, total: number) => void) | undefined,
+  signal: ImportSignal | undefined,
+  result: ImportResult
+): Promise<ImportResult> {
+  // Placeholder: count rows as imported for now
+  for (let i = 0; i < rows.length; i++) {
+    if (signal?.cancelled) break
+    // Future: insert into marketing_metrics table
+    result.imported++
+    if (onProgress && i % 50 === 0) {
+      onProgress(i + 1, rows.length)
+    }
+  }
+  if (onProgress) onProgress(rows.length, rows.length)
+  return result
+}
+
 // ─── Helpers ───
 function parseDate(str: string): string | null {
   // Try ISO format: 2025-09-01
@@ -369,18 +673,16 @@ function parseDate(str: string): string | null {
 }
 
 function parseAmount(str: string): number | null {
-  // Remove currency symbols, spaces, and handle comma as decimal
+  if (!str) return null
   const cleaned = str.replace(/[^0-9.,\-]/g, '').replace(/\s/g, '')
-  // Handle "1.234,56" → "1234.56"
+  if (!cleaned) return null
   if (cleaned.includes(',') && cleaned.includes('.')) {
     const lastComma = cleaned.lastIndexOf(',')
     const lastDot = cleaned.lastIndexOf('.')
     if (lastComma > lastDot) {
-      // European format: 1.234,56
       return parseFloat(cleaned.replace(/\./g, '').replace(',', '.'))
     }
   }
-  // Handle "1234,56" → "1234.56"
   if (cleaned.includes(',') && !cleaned.includes('.')) {
     return parseFloat(cleaned.replace(',', '.'))
   }
