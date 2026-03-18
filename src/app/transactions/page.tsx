@@ -38,7 +38,7 @@ export default function TransactionsPage() {
       data = data.filter(t => t.email.includes(q) || t.company.toLowerCase().includes(q) || t.plan.toLowerCase().includes(q) || (t.invoiceNumber || '').toLowerCase().includes(q))
     }
     if (statusFilter !== 'all') data = data.filter(t => t.status === statusFilter)
-    if (sourceFilter !== 'all') data = data.filter(t => t.source === sourceFilter)
+    if (sourceFilter !== 'all') data = data.filter(t => t.source.toLowerCase().startsWith(sourceFilter))
     if (typeFilter !== 'all') data = data.filter(t => t.type === typeFilter)
 
     data.sort((a, b) => {
@@ -47,7 +47,16 @@ export default function TransactionsPage() {
       return a[sortKey].localeCompare(b[sortKey]) * mul
     })
     return data
-  }, [dateRange, search, statusFilter, sourceFilter, typeFilter, sortKey, sortDir])
+  }, [dateRange, search, statusFilter, sourceFilter, typeFilter, sortKey, sortDir, DEMO_TRANSACTIONS])
+
+  const availableSources = useMemo(() => {
+    const sourceSet = new Set<string>()
+    DEMO_TRANSACTIONS.forEach(t => {
+      const prefix = t.source.split('_')[0].toLowerCase()
+      sourceSet.add(prefix)
+    })
+    return ['all', ...Array.from(sourceSet).sort()]
+  }, [DEMO_TRANSACTIONS])
 
   const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
@@ -129,14 +138,14 @@ export default function TransactionsPage() {
               </Badge>
             ))}
             <span className="text-gray-200 mx-1">|</span>
-            {(['all', 'stripe', 'invoice'] as const).map(s => (
+            {availableSources.map(s => (
               <Badge
                 key={s}
                 variant="outline"
                 className={`cursor-pointer text-[10px] ${sourceFilter === s ? 'bg-black text-white border-black' : 'hover:bg-gray-50'}`}
                 onClick={() => { setSourceFilter(s); setPage(0) }}
               >
-                {s === 'all' ? 'All sources' : s}
+                {s === 'all' ? 'All sources' : s.charAt(0).toUpperCase() + s.slice(1)}
               </Badge>
             ))}
             <span className="text-gray-200 mx-1">|</span>

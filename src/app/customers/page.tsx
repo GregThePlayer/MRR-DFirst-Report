@@ -14,9 +14,11 @@ import { DateRangePicker, DEFAULT_RANGE, type DateRange } from "@/components/dat
 import type { DemoCustomerFull } from "@/lib/demo-transactions"
 import { useCurrency } from "@/lib/currency-context"
 import { useCustomers, useTransactions } from "@/lib/use-data"
+import { supabase } from "@/lib/supabase"
+import { toast } from "sonner"
 import {
   Search, Plus, Edit2, Building2, DollarSign, Package, Calendar,
-  ArrowUpDown, Filter, Users, TrendingUp, ChevronLeft, ChevronRight, Mail, Phone, Hash
+  ArrowUpDown, Filter, Users, TrendingUp, ChevronLeft, ChevronRight, Mail, Phone, Hash, Loader2
 } from "lucide-react"
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 
@@ -26,7 +28,7 @@ type SortDir = 'asc' | 'desc'
 export default function CustomersPage() {
   const { formatCurrency, convert, currency } = useCurrency()
   const sym = { USD: '$', EUR: '€', PLN: '' }[currency] || ''
-  const { data: DEMO_CUSTOMERS_FULL, loading } = useCustomers()
+  const { data: DEMO_CUSTOMERS_FULL, loading, refetch } = useCustomers()
   const { data: allTransactions } = useTransactions()
   const [dateRange, setDateRange] = useState<DateRange>(DEFAULT_RANGE)
   const [search, setSearch] = useState("")
@@ -37,6 +39,8 @@ export default function CustomersPage() {
   const [page, setPage] = useState(0)
   const [selectedCustomer, setSelectedCustomer] = useState<DemoCustomerFull | null>(null)
   const [editOpen, setEditOpen] = useState(false)
+  const [editForm, setEditForm] = useState({ company: '', contact: '', email: '', phone: '', nip: '', tags: '', notes: '' })
+  const [saving, setSaving] = useState(false)
   const PAGE_SIZE = 25
 
   const filtered = useMemo(() => {
@@ -59,17 +63,27 @@ export default function CustomersPage() {
       return (a[sortKey] || '').localeCompare(b[sortKey] || '') * mul
     })
     return data
-  }, [search, statusFilter, tagFilter, sortKey, sortDir])
+  }, [search, statusFilter, tagFilter, sortKey, sortDir, DEMO_CUSTOMERS_FULL])
 
   const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
 
   // Monthly customer counts
-  const months = ['2025-09', '2025-10', '2025-11', '2025-12', '2026-01', '2026-02', '2026-03']
-  const monthLabels: Record<string, string> = {
-    '2025-09': 'Sep 25', '2025-10': 'Oct 25', '2025-11': 'Nov 25', '2025-12': 'Dec 25',
-    '2026-01': 'Jan 26', '2026-02': 'Feb 26', '2026-03': 'Mar 26',
-  }
+  const months = useMemo(() => {
+    const allMonths = new Set(allTransactions.map(t => t.month))
+    return Array.from(allMonths).sort()
+  }, [allTransactions])
+
+  const monthLabels = useMemo(() => {
+    const labels: Record<string, string> = {}
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    for (const mo of months) {
+      const [y, m] = mo.split('-')
+      labels[mo] = `${monthNames[parseInt(m) - 1]} ${y.slice(2)}`
+    }
+    return labels
+  }, [months])
+
   const monthlyCounts = months.map(mo => {
     const active = new Set(allTransactions.filter(t => t.month === mo && t.status === 'succeeded').map(t => t.email))
     const newCusts = new Set(allTransactions.filter(t => t.month === mo && t.isFirst && t.status === 'succeeded').map(t => t.email))
@@ -93,6 +107,31 @@ export default function CustomersPage() {
       </div>
     </TableHead>
   )
+
+  const handleSaveCustomer = async () => {
+    if (!supabase || !selectedCustomer) return
+    setSaving(true)
+    try {
+      const { error } = await (supabase as any).from('customers').update({
+        company_name: editForm.company || null,
+        contact_name: editForm.contact || null,
+        email: editForm.email || null,
+        phone: editForm.phone || null,
+        nip: editForm.nip || null,
+        tags: editForm.tags ? editForm.tags.split(',').map((t: string) => t.trim()).filter(Boolean) : [],
+        notes: editForm.notes || null,
+      }).eq('id', selectedCustomer.id)
+      if (error) throw error
+      toast.success('Customer updated')
+      setEditOpen(false)
+      setSelectedCustomer(null)
+      refetch()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const allTags = Array.from(new Set(DEMO_CUSTOMERS_FULL.flatMap(c => c.tags)))
 
@@ -370,7 +409,20 @@ export default function CustomersPage() {
                     ))}
                   </div>
 
-                  <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+                  <Button variant="outline" size="sm" onClick={() => {
+                    if (selectedCustomer) {
+                      setEditForm({
+                        company: selectedCustomer.company,
+                        contact: selectedCustomer.contact,
+                        email: selectedCustomer.email,
+                        phone: selectedCustomer.phone,
+                        nip: selectedCustomer.nip,
+                        tags: selectedCustomer.tags.join(', '),
+                        notes: '',
+                      })
+                      setEditOpen(true)
+                    }
+                  }}>
                     <Edit2 className="w-3.5 h-3.5 mr-1" /> Edit Customer
                   </Button>
                 </TabsContent>
@@ -462,21 +514,24 @@ export default function CustomersPage() {
           </DialogHeader>
           <div className="space-y-3 mt-2">
             <div className="grid grid-cols-2 gap-3">
-              <div><Label className="text-xs">Company</Label><Input defaultValue={selectedCustomer?.company} className="h-8 text-sm" /></div>
-              <div><Label className="text-xs">Contact</Label><Input defaultValue={selectedCustomer?.contact} className="h-8 text-sm" /></div>
+              <div><Label className="text-xs">Company</Label><Input value={editForm.company} onChange={e => setEditForm(f => ({...f, company: e.target.value}))} className="h-8 text-sm" /></div>
+              <div><Label className="text-xs">Contact</Label><Input value={editForm.contact} onChange={e => setEditForm(f => ({...f, contact: e.target.value}))} className="h-8 text-sm" /></div>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div><Label className="text-xs">Email</Label><Input defaultValue={selectedCustomer?.email} className="h-8 text-sm" /></div>
-              <div><Label className="text-xs">Phone</Label><Input defaultValue={selectedCustomer?.phone} className="h-8 text-sm" /></div>
+              <div><Label className="text-xs">Email</Label><Input value={editForm.email} onChange={e => setEditForm(f => ({...f, email: e.target.value}))} className="h-8 text-sm" /></div>
+              <div><Label className="text-xs">Phone</Label><Input value={editForm.phone} onChange={e => setEditForm(f => ({...f, phone: e.target.value}))} className="h-8 text-sm" /></div>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div><Label className="text-xs">NIP</Label><Input defaultValue={selectedCustomer?.nip} className="h-8 text-sm" /></div>
-              <div><Label className="text-xs">Tags</Label><Input defaultValue={selectedCustomer?.tags.join(', ')} className="h-8 text-sm" /></div>
+              <div><Label className="text-xs">NIP</Label><Input value={editForm.nip} onChange={e => setEditForm(f => ({...f, nip: e.target.value}))} className="h-8 text-sm" /></div>
+              <div><Label className="text-xs">Tags</Label><Input value={editForm.tags} onChange={e => setEditForm(f => ({...f, tags: e.target.value}))} className="h-8 text-sm" /></div>
             </div>
-            <div><Label className="text-xs">Notes</Label><Textarea rows={2} className="text-sm" /></div>
+            <div><Label className="text-xs">Notes</Label><Textarea rows={2} className="text-sm" value={editForm.notes} onChange={e => setEditForm(f => ({...f, notes: e.target.value}))} /></div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => setEditOpen(false)}>Cancel</Button>
-              <Button size="sm" className="bg-black text-white hover:bg-gray-800" onClick={() => setEditOpen(false)}>Save</Button>
+              <Button size="sm" className="bg-black text-white hover:bg-gray-800" onClick={handleSaveCustomer} disabled={saving}>
+                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+                Save
+              </Button>
             </div>
           </div>
         </DialogContent>

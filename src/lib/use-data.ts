@@ -238,16 +238,36 @@ export function useProducts(): DataState<ProductRow[]> {
           aliasesByProduct.get(a.product_id)!.push(a.alias)
         }
 
-        const mapped: ProductRow[] = ((prodRes.data || []) as Product[]).map(p => ({
-          id: p.id,
-          name: p.display_name,
-          category: p.category,
-          billing_type: p.billing_type,
-          base_price_usd: p.base_price_usd,
-          aliases: aliasesByProduct.get(p.id) || [],
-          customers: 0,
-          revenue: 0,
-        }))
+        // Get revenue/customer stats per product
+        const { data: txData } = await supabase!
+          .from('transactions')
+          .select('product_id, amount_usd, customer_id')
+          .eq('status', 'succeeded')
+
+        const productStats = new Map<string, { revenue: number; customers: Set<string> }>()
+        for (const tx of (txData || []) as { product_id: string | null; amount_usd: number; customer_id: string | null }[]) {
+          if (!tx.product_id) continue
+          if (!productStats.has(tx.product_id)) {
+            productStats.set(tx.product_id, { revenue: 0, customers: new Set() })
+          }
+          const s = productStats.get(tx.product_id)!
+          s.revenue += tx.amount_usd
+          if (tx.customer_id) s.customers.add(tx.customer_id)
+        }
+
+        const mapped: ProductRow[] = ((prodRes.data || []) as Product[]).map(p => {
+          const stats = productStats.get(p.id)
+          return {
+            id: p.id,
+            name: p.display_name,
+            category: p.category,
+            billing_type: p.billing_type,
+            base_price_usd: p.base_price_usd,
+            aliases: aliasesByProduct.get(p.id) || [],
+            customers: stats?.customers.size || 0,
+            revenue: stats?.revenue || 0,
+          }
+        })
 
         setState({ data: mapped, source: 'supabase', loading: false, error: null })
       } catch (err) {

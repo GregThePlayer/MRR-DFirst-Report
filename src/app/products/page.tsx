@@ -10,20 +10,91 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useCurrency } from "@/lib/currency-context"
 import { useProducts } from "@/lib/use-data"
-import { Package, Plus, Link2, Edit2, ArrowRight, Tag } from "lucide-react"
+import { supabase } from "@/lib/supabase"
+import { toast } from "sonner"
+import { Package, Plus, Link2, ArrowRight, Tag, Loader2, Trash2 } from "lucide-react"
 
 export default function ProductsPage() {
   const { formatCurrency } = useCurrency()
-  const { data: DEMO_PRODUCTS } = useProducts()
+  const { data: DEMO_PRODUCTS, refetch } = useProducts()
   const [aliasDialogOpen, setAliasDialogOpen] = useState(false)
   const [selectedProduct, setSelectedProduct] = useState<typeof DEMO_PRODUCTS[0] | null>(null)
   const [newAlias, setNewAlias] = useState("")
+  const [addDialogOpen, setAddDialogOpen] = useState(false)
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [productForm, setProductForm] = useState({
+    name: '', display_name: '', category: 'subscription' as string,
+    billing_type: 'monthly' as string, base_price_usd: '', description: ''
+  })
+
+  const handleAddProduct = async () => {
+    if (!supabase || !productForm.name) return
+    setSaving(true)
+    try {
+      const { error } = await (supabase as any).from('products').insert({
+        name: productForm.name,
+        display_name: productForm.display_name || productForm.name,
+        category: productForm.category,
+        billing_type: productForm.billing_type,
+        base_price_usd: productForm.base_price_usd ? parseFloat(productForm.base_price_usd) : null,
+        description: productForm.description || null,
+        is_active: true,
+      })
+      if (error) throw error
+      toast.success('Product added')
+      setAddDialogOpen(false)
+      setProductForm({ name: '', display_name: '', category: 'subscription', billing_type: 'monthly', base_price_usd: '', description: '' })
+      refetch()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to add product')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleEditProduct = async () => {
+    if (!supabase || !selectedProduct) return
+    setSaving(true)
+    try {
+      const { error } = await (supabase as any).from('products').update({
+        name: productForm.name,
+        display_name: productForm.display_name || productForm.name,
+        category: productForm.category,
+        billing_type: productForm.billing_type,
+        base_price_usd: productForm.base_price_usd ? parseFloat(productForm.base_price_usd) : null,
+        description: productForm.description || null,
+      }).eq('id', selectedProduct.id)
+      if (error) throw error
+      toast.success('Product updated')
+      setEditDialogOpen(false)
+      refetch()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update product')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDeleteProduct = async (productId: string) => {
+    if (!supabase) return
+    if (!confirm('Delete this product?')) return
+    try {
+      const { error } = await (supabase as any).from('products').delete().eq('id', productId)
+      if (error) throw error
+      toast.success('Product deleted')
+      refetch()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete')
+    }
+  }
 
   const categoryColors: Record<string, string> = {
     subscription: "bg-blue-100 text-blue-700",
     course: "bg-purple-100 text-purple-700",
     enterprise: "bg-amber-100 text-amber-700",
     one_time: "bg-gray-100 text-gray-700",
+    other: "bg-gray-100 text-gray-700",
   }
 
   const billingColors: Record<string, string> = {
@@ -41,7 +112,10 @@ export default function ProductsPage() {
             Product catalog with alias grouping · {DEMO_PRODUCTS.length} products
           </p>
         </div>
-        <Button className="bg-black text-white hover:bg-gray-800">
+        <Button className="bg-black text-white hover:bg-gray-800" onClick={() => {
+          setProductForm({ name: '', display_name: '', category: 'subscription', billing_type: 'monthly', base_price_usd: '', description: '' })
+          setAddDialogOpen(true)
+        }}>
           <Plus className="w-4 h-4 mr-1" /> Add Product
         </Button>
       </div>
@@ -72,12 +146,19 @@ export default function ProductsPage() {
               <TableHead className="font-bold text-black text-right">Customers</TableHead>
               <TableHead className="font-bold text-black text-right">Revenue</TableHead>
               <TableHead className="font-bold text-black">Aliases</TableHead>
-              <TableHead className="font-bold text-black w-[60px]"></TableHead>
+              <TableHead className="font-bold text-black w-[80px]"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {DEMO_PRODUCTS.map(p => (
-              <TableRow key={p.id} className="hover:bg-gray-50/80">
+              <TableRow key={p.id} className="hover:bg-gray-50/80 cursor-pointer" onClick={() => {
+                setSelectedProduct(p)
+                setProductForm({
+                  name: p.name, display_name: p.name, category: p.category, billing_type: p.billing_type,
+                  base_price_usd: p.base_price_usd ? String(p.base_price_usd) : '', description: ''
+                })
+                setEditDialogOpen(true)
+              }}>
                 <TableCell>
                   <div className="flex items-center gap-2">
                     <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center">
@@ -87,12 +168,12 @@ export default function ProductsPage() {
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Badge className={`${categoryColors[p.category]} hover:${categoryColors[p.category]} text-[10px]`}>
+                  <Badge className={`${categoryColors[p.category] || categoryColors.other} hover:${categoryColors[p.category] || categoryColors.other} text-[10px]`}>
                     {p.category}
                   </Badge>
                 </TableCell>
                 <TableCell>
-                  <Badge className={`${billingColors[p.billing_type]} hover:${billingColors[p.billing_type]} text-[10px]`}>
+                  <Badge className={`${billingColors[p.billing_type] || billingColors.one_time} hover:${billingColors[p.billing_type] || billingColors.one_time} text-[10px]`}>
                     {p.billing_type}
                   </Badge>
                 </TableCell>
@@ -112,13 +193,22 @@ export default function ProductsPage() {
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => { setSelectedProduct(p); setAliasDialogOpen(true) }}
-                  >
-                    <Tag className="w-3.5 h-3.5" />
-                  </Button>
+                  <div className="flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={(e) => { e.stopPropagation(); setSelectedProduct(p); setAliasDialogOpen(true) }}
+                    >
+                      <Tag className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={(e) => { e.stopPropagation(); handleDeleteProduct(p.id) }}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
@@ -185,6 +275,47 @@ export default function ProductsPage() {
               />
               <Button className="bg-black text-white hover:bg-gray-800 shrink-0">
                 <Plus className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add/Edit Product Dialog */}
+      <Dialog open={addDialogOpen || editDialogOpen} onOpenChange={(open) => { if (!open) { setAddDialogOpen(false); setEditDialogOpen(false) } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editDialogOpen ? 'Edit Product' : 'Add Product'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 mt-2">
+            <div><Label className="text-xs">Product Name (internal)</Label><Input value={productForm.name} onChange={e => setProductForm(f => ({...f, name: e.target.value}))} className="h-8 text-sm" /></div>
+            <div><Label className="text-xs">Display Name</Label><Input value={productForm.display_name} onChange={e => setProductForm(f => ({...f, display_name: e.target.value}))} className="h-8 text-sm" /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Category</Label>
+                <select className="w-full h-8 text-sm border rounded px-2" value={productForm.category} onChange={e => setProductForm(f => ({...f, category: e.target.value}))}>
+                  <option value="subscription">Subscription</option>
+                  <option value="course">Course</option>
+                  <option value="enterprise">Enterprise</option>
+                  <option value="one_time">One-time</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div>
+                <Label className="text-xs">Billing Type</Label>
+                <select className="w-full h-8 text-sm border rounded px-2" value={productForm.billing_type} onChange={e => setProductForm(f => ({...f, billing_type: e.target.value}))}>
+                  <option value="monthly">Monthly</option>
+                  <option value="annual">Annual</option>
+                  <option value="one_time">One-time</option>
+                </select>
+              </div>
+            </div>
+            <div><Label className="text-xs">Base Price (USD)</Label><Input value={productForm.base_price_usd} onChange={e => setProductForm(f => ({...f, base_price_usd: e.target.value}))} className="h-8 text-sm" type="number" step="0.01" /></div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => { setAddDialogOpen(false); setEditDialogOpen(false) }}>Cancel</Button>
+              <Button size="sm" className="bg-black text-white hover:bg-gray-800" onClick={editDialogOpen ? handleEditProduct : handleAddProduct} disabled={saving || !productForm.name}>
+                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+                {editDialogOpen ? 'Save' : 'Add Product'}
               </Button>
             </div>
           </div>

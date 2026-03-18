@@ -583,6 +583,37 @@ async function importTaxxo(
       const vatPln = parseAmount(vatPlnStr)
       const grossPln = parseAmount(grossPlnStr)
 
+      // Cross-source dedup: check if matching Stripe transaction exists
+      if (customerId && amount !== null) {
+        const dateLow = new Date(new Date(parsedDate).getTime() - 3 * 86400000).toISOString().slice(0, 10)
+        const dateHigh = new Date(new Date(parsedDate).getTime() + 3 * 86400000).toISOString().slice(0, 10)
+        const amountLow = Math.abs(amount) * 0.95
+        const amountHigh = Math.abs(amount) * 1.05
+
+        const { data: dupes } = await db
+          .from('transactions')
+          .select('id')
+          .eq('customer_id', customerId)
+          .gte('transaction_date', dateLow)
+          .lte('transaction_date', dateHigh)
+          .gte('amount_usd', amountLow)
+          .lte('amount_usd', amountHigh)
+          .limit(1)
+
+        if (dupes && dupes.length > 0) {
+          // Update existing transaction with invoice data instead of creating duplicate
+          await db.from('transactions').update({
+            invoice_number: invoiceNumber || null,
+            invoice_net_pln: amountPln,
+            invoice_gross_pln: grossPln,
+            invoice_tax_pln: vatPln,
+          }).eq('id', dupes[0].id)
+          result.skipped++
+          if (onProgress && i % BATCH_SIZE === 0) onProgress(i + 1, rows.length)
+          continue
+        }
+      }
+
       const { error: txErr } = await db.from('transactions').insert({
         source: sourceLabel,
         source_id: invoiceNumber || null,
